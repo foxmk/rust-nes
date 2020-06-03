@@ -88,6 +88,42 @@ impl<'a> Cpu<'a> {
 
                     self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
 
+                    if self.a == 0x00 {
+                        self.flags |= Flag::Z as u8;
+                    }
+
+                    if self.a & 0b10000000 > 0 {
+                        self.flags |= Flag::N as u8;
+                    }
+
+                    continue;
+                }
+                0xB9 => {
+                    let low = self.mem[self.pc as usize];
+                    self.pc += 1;
+                    let (addr, page_crossed) = low.overflowing_add(self.y);
+
+                    let hi = self.mem[self.pc as usize];
+                    self.pc += 1;
+
+                    let page = if page_crossed {
+                        ticks -= 5;
+                        hi + 1
+                    } else {
+                        ticks -= 4;
+                        hi
+                    };
+
+                    self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
+
+                    if self.a == 0x00 {
+                        self.flags |= Flag::Z as u8;
+                    }
+
+                    if self.a & 0b10000000 > 0 {
+                        self.flags |= Flag::N as u8;
+                    }
+
                     continue;
                 }
                 0x8D => {
@@ -112,6 +148,14 @@ impl<'a> Cpu<'a> {
 
                     self.a = self.mem[u16::from_le_bytes([low, hi]) as usize];
 
+                    if self.a == 0x00 {
+                        self.flags |= Flag::Z as u8;
+                    }
+
+                    if self.a & 0b10000000 > 0 {
+                        self.flags |= Flag::N as u8;
+                    }
+
                     ticks -= 4;
 
                     continue;
@@ -127,8 +171,6 @@ mod test {
     use std::io::Write;
 
     use super::*;
-
-    const START_ADDR: u16 = 0x0000;
 
     struct TestMemory([u8; std::u16::MAX as usize]);
 
@@ -173,7 +215,7 @@ mod test {
     #[test]
     fn lda_imm() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xA9, 0x01]); // LDA #$01
+        mem.write_bytes(0x0000, &[0xA9, 0x01]); // LDA #$01
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
@@ -183,9 +225,9 @@ mod test {
     }
 
     #[test]
-    fn lda_sets_negative_flag() {
+    fn lda_imm_sets_negative_flag() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xA9, 0b10000001]); // LDA #$81
+        mem.write_bytes(0x0000, &[0xA9, 0b10000001]); // LDA #$81
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
@@ -195,9 +237,9 @@ mod test {
     }
 
     #[test]
-    fn lda_sets_zero_flag() {
+    fn lda_imm_sets_zero_flag() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xA9, 0x00]); // LDA #$00
+        mem.write_bytes(0x0000, &[0xA9, 0x00]); // LDA #$00
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
@@ -207,9 +249,33 @@ mod test {
     }
 
     #[test]
+    fn lda_imm_clears_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xA9, 0b10]); // LDA #$10
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(2);
+
+        assert_eq!(cpu.test_flag(Flag::N), false)
+    }
+
+    #[test]
+    fn lda_imm_clears_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xA9, 0x01]); // LDA #$01
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(2);
+
+        assert_eq!(cpu.test_flag(Flag::Z), false)
+    }
+
+    #[test]
     fn lda_abs() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
+        mem.write_bytes(0x0000, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
         mem.write_bytes(0xCAFE, &[0xFF]);
 
         let mut cpu = Cpu::with_mem(&mut mem);
@@ -220,9 +286,61 @@ mod test {
     }
 
     #[test]
+    fn lda_abs_sets_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
+        mem.write_bytes(0xCAFE, &[0xFF]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), true)
+    }
+
+    #[test]
+    fn lda_abs_sets_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
+        mem.write_bytes(0xCAFE, &[0x00]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), true)
+    }
+
+    #[test]
+    fn lda_abs_clears_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
+        mem.write_bytes(0xCAFE, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), false)
+    }
+
+    #[test]
+    fn lda_abs_clears_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
+        mem.write_bytes(0xCAFE, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), false)
+    }
+
+    #[test]
     fn lda_abs_x() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xBD, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0000, &[0xBD, 0x10, 0x02]); // LDA $0210,X
         mem.write_bytes(0x0210 + 0x12, &[0xAD]);
 
         let mut cpu = Cpu::with_mem(&mut mem);
@@ -234,9 +352,65 @@ mod test {
     }
 
     #[test]
+    fn lda_abs_x_sets_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xBD, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0xAD]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), true)
+    }
+
+    #[test]
+    fn lda_abs_x_sets_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xBD, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0x00]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), true)
+    }
+
+    #[test]
+    fn lda_abs_x_clears_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xBD, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), false)
+    }
+
+    #[test]
+    fn lda_abs_x_clears_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xBD, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), false)
+    }
+
+    #[test]
     fn lda_abs_x_page_cross() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xBD, 0xFF, 0x21]); // LDA $21FF,X
+        mem.write_bytes(0x0000, &[0xBD, 0xFF, 0x21]); // LDA $21FF,X
         mem.write_bytes(0x21FF + 0x01, &[0xAD]); // <-- page cross
 
         let mut cpu = Cpu::with_mem(&mut mem);
@@ -248,9 +422,93 @@ mod test {
     }
 
     #[test]
+    fn lda_abs_y() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB9, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0xAD]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::Y, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.get_register(Register::A), 0xAD);
+    }
+
+    #[test]
+    fn lda_abs_y_sets_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB9, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0xAD]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::Y, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), true)
+    }
+
+    #[test]
+    fn lda_abs_y_sets_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB9, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0x00]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::Y, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), true)
+    }
+
+    #[test]
+    fn lda_abs_y_clears_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB9, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::Y, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), false)
+    }
+
+    #[test]
+    fn lda_abs_y_clears_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB9, 0x10, 0x02]); // LDA $0210,X
+        mem.write_bytes(0x0210 + 0x12, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::Y, 0x12);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), false)
+    }
+
+    #[test]
+    fn lda_abs_y_page_cross() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB9, 0xFF, 0x21]); // LDA $21FF,X
+        mem.write_bytes(0x21FF + 0x01, &[0xAD]); // <-- page cross
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::Y, 0x01);
+
+        cpu.tick(5);
+
+        assert_eq!(cpu.get_register(Register::A), 0xAD);
+    }
+
+    #[test]
     fn lda_zpg() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xA5, 0xED]); // LDA $ED
+        mem.write_bytes(0x0000, &[0xA5, 0xED]); // LDA $ED
         mem.write_bytes(0x00ED, &[0xFE]);
 
         let mut cpu = Cpu::with_mem(&mut mem);
@@ -263,7 +521,7 @@ mod test {
     #[test]
     fn lda_zpg_x() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0xB5, 0xED]); // LDA $ED,X
+        mem.write_bytes(0x0000, &[0xB5, 0xED]); // LDA $ED,X
         mem.write_bytes(0x00ED + 0x0011, &[0xCE]);
 
         let mut cpu = Cpu::with_mem(&mut mem);
@@ -277,7 +535,7 @@ mod test {
     #[test]
     fn sta_abs() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[0x8D, 0x00, 0x02]); // STA $0200
+        mem.write_bytes(0x0000, &[0x8D, 0x00, 0x02]); // STA $0200
 
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::A, 0x01);
