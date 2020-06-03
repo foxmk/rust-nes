@@ -123,9 +123,7 @@ mod test {
     #[test]
     fn lda_imm() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[
-            /* LDA #$01  */ 0xA9, 0x01
-        ]);
+        mem.write_bytes(START_ADDR, &[0xA9, 0x01]); // LDA #$01
 
         let mut cpu = Cpu::new(&mut mem.0);
 
@@ -137,10 +135,7 @@ mod test {
     #[test]
     fn lda_abs() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[
-            /* LDA $CAFE */ 0xAD, 0xFE, 0xCA,
-        ]);
-
+        mem.write_bytes(START_ADDR, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
         mem.write_bytes(0xCAFE, &[0xFF]);
 
         let mut cpu = Cpu::new(&mut mem.0);
@@ -153,10 +148,7 @@ mod test {
     #[test]
     fn lda_abs_x() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[
-            /* LDA $0210,X */ 0xBD, 0x10, 0x02,
-        ]);
-
+        mem.write_bytes(START_ADDR, &[0xBD, 0x10, 0x02]); // LDA $0210,X
         mem.write_bytes(0x0210 + 0x12, &[0xAD]);
 
         let mut cpu = Cpu::new(&mut mem.0);
@@ -170,10 +162,7 @@ mod test {
     #[test]
     fn lda_abs_x_page_cross() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[
-            /* LDA $21FF,X */ 0xBD, 0xFF, 0x21,
-        ]);
-
+        mem.write_bytes(START_ADDR, &[0xBD, 0xFF, 0x21]); // LDA $21FF,X
         mem.write_bytes(0x21FF + 0x01, &[0xAD]); // <-- page cross
 
         let mut cpu = Cpu::new(&mut mem.0);
@@ -187,10 +176,7 @@ mod test {
     #[test]
     fn lda_zpg() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[
-            /* LDA $ED */ 0xA5, 0xED,
-        ]);
-
+        mem.write_bytes(START_ADDR, &[0xA5, 0xED]); // LDA $ED
         mem.write_bytes(0x00ED, &[0xFE]);
 
         let mut cpu = Cpu::new(&mut mem.0);
@@ -203,10 +189,7 @@ mod test {
     #[test]
     fn lda_zpg_x() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[
-            /* LDA $ED,X */ 0xB5, 0xED,
-        ]);
-
+        mem.write_bytes(START_ADDR, &[0xB5, 0xED]); // LDA $ED,X
         mem.write_bytes(0x00ED + 0x0011, &[0xCE]);
 
         let mut cpu = Cpu::new(&mut mem.0);
@@ -220,9 +203,7 @@ mod test {
     #[test]
     fn sta_abs() {
         let mut mem = TestMemory::new();
-        mem.write_bytes(START_ADDR, &[
-            /* STA $0200 */ 0x8D, 0x00, 0x02,
-        ]);
+        mem.write_bytes(START_ADDR, &[0x8D, 0x00, 0x02]); // STA $0200
 
         let mut cpu = Cpu::new(&mut mem.0);
         cpu.a = 0x01;
