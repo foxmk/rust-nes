@@ -1,8 +1,27 @@
+enum Flag {
+    N = 0b10000000,
+    V = 0b01000000,
+    D = 0b00001000,
+    I = 0b00000100,
+    Z = 0b00000010,
+    C = 0b00000001,
+}
+
+enum Register {
+    A,
+    X,
+    Y,
+    PC,
+    SP,
+}
+
 struct Cpu<'a> {
     mem: &'a mut [u8],
     a: u8,
     x: u8,
+    y: u8,
     pc: u16,
+    flags: u8,
 }
 
 impl<'a> Cpu<'a> {
@@ -11,7 +30,9 @@ impl<'a> Cpu<'a> {
             mem,
             a: 0x00,
             x: 0x00,
+            y: 0x00,
             pc: 0x0000,
+            flags: 0b00000000,
         }
     }
 
@@ -25,6 +46,15 @@ impl<'a> Cpu<'a> {
                     self.a = self.mem[self.pc as usize];
                     self.pc += 1;
                     ticks -= 2;
+
+                    if self.a == 0x00 {
+                        self.flags |= Flag::Z as u8;
+                    }
+
+                    if self.a & 0b10000000 > 0 {
+                        self.flags |= Flag::N as u8;
+                    }
+
                     continue;
                 }
                 0xA5 => {
@@ -98,6 +128,22 @@ impl<'a> Cpu<'a> {
             }
         }
     }
+
+    #[cfg(test)]
+    fn test_flag(&self, flag: Flag) -> bool {
+        (self.flags & flag as u8) > 0
+    }
+
+    #[cfg(test)]
+    fn get_byte_register(&self, reg: Register) -> u8 {
+        match reg {
+            Register::A => self.a,
+            Register::X => self.x,
+            Register::Y => self.y,
+            Register::PC => unreachable!("PC is not a byte register"),
+            Register::SP => unreachable!("SP is not a byte register"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -129,7 +175,31 @@ mod test {
 
         cpu.tick(2);
 
-        assert_eq!(cpu.a, 0x01, "A register should contain 0x01");
+        assert_eq!(cpu.get_byte_register(Register::A), 0x01, "A register should contain 0x01");
+    }
+
+    #[test]
+    fn lda_sets_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(START_ADDR, &[0xA9, 0b10000001]); // LDA #$81
+
+        let mut cpu = Cpu::new(&mut mem.0);
+
+        cpu.tick(2);
+
+        assert_eq!(cpu.test_flag(Flag::N), true, "N flag should be set")
+    }
+
+    #[test]
+    fn lda_sets_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(START_ADDR, &[0xA9, 0x00]); // LDA #$00
+
+        let mut cpu = Cpu::new(&mut mem.0);
+
+        cpu.tick(2);
+
+        assert_eq!(cpu.test_flag(Flag::Z), true, "Z flag should be set")
     }
 
     #[test]
@@ -142,7 +212,7 @@ mod test {
 
         cpu.tick(4);
 
-        assert_eq!(cpu.a, 0xFF, "A register should contain 0xFF");
+        assert_eq!(cpu.get_byte_register(Register::A), 0xFF, "A register should contain 0xFF");
     }
 
     #[test]
@@ -156,7 +226,7 @@ mod test {
 
         cpu.tick(4);
 
-        assert_eq!(cpu.a, 0xAD, "A register should contain 0xAD");
+        assert_eq!(cpu.get_byte_register(Register::A), 0xAD, "A register should contain 0xAD");
     }
 
     #[test]
@@ -170,7 +240,7 @@ mod test {
 
         cpu.tick(5);
 
-        assert_eq!(cpu.a, 0xAD, "A register should contain 0xAD");
+        assert_eq!(cpu.get_byte_register(Register::A), 0xAD, "A register should contain 0xAD");
     }
 
     #[test]
@@ -183,7 +253,7 @@ mod test {
 
         cpu.tick(3);
 
-        assert_eq!(cpu.a, 0xFE, "A register should contain 0xFE");
+        assert_eq!(cpu.get_byte_register(Register::A), 0xFE, "A register should contain 0xFE");
     }
 
     #[test]
@@ -197,7 +267,7 @@ mod test {
 
         cpu.tick(4);
 
-        assert_eq!(cpu.a, 0xCE, "A register should contain 0xCE");
+        assert_eq!(cpu.get_byte_register(Register::A), 0xCE, "A register should contain 0xCE");
     }
 
     #[test]
