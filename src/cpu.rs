@@ -13,37 +13,46 @@ impl<'a> Cpu<'a> {
         }
     }
 
-    pub fn tick(&mut self) {
-        let byte = self.mem[self.pc as usize];
-        self.pc += 1;
+    pub fn tick(&mut self, mut ticks: usize) {
+        while ticks > 0 {
+            let byte = self.mem[self.pc as usize];
+            self.pc += 1;
 
-        match byte {
-            0xA9 => {
-                self.a = self.mem[self.pc as usize];
-                self.pc += 1;
-                return;
+            match byte {
+                0xA9 => {
+                    self.a = self.mem[self.pc as usize];
+                    self.pc += 1;
+                    ticks -= 2;
+                    return;
+                }
+                0xAD => {
+                    let hi = self.mem[self.pc as usize];
+                    self.pc += 1;
+
+                    let low = self.mem[self.pc as usize];
+                    self.pc += 1;
+
+                    self.a = self.mem[u16::from_le_bytes([hi, low]) as usize];
+
+                    ticks -= 3;
+
+                    return;
+                }
+                0x8D => {
+                    let hi = self.mem[self.pc as usize];
+                    self.pc += 1;
+
+                    let low = self.mem[self.pc as usize];
+                    self.pc += 1;
+
+                    self.mem[u16::from_le_bytes([hi, low]) as usize] = self.a;
+
+                    ticks -= 4;
+
+                    return;
+                }
+                _ => unreachable!(),
             }
-            0xAD => {
-                let hi = self.mem[self.pc as usize];
-                self.pc += 1;
-
-                let low = self.mem[self.pc as usize];
-                self.pc += 1;
-
-                self.a = self.mem[u16::from_le_bytes([hi, low]) as usize];
-                return;
-            }
-            0x8D => {
-                let hi = self.mem[self.pc as usize];
-                self.pc += 1;
-
-                let low = self.mem[self.pc as usize];
-                self.pc += 1;
-
-                self.mem[u16::from_le_bytes([hi, low]) as usize] = self.a;
-                return;
-            }
-            _ => unreachable!(),
         }
     }
 }
@@ -54,52 +63,59 @@ mod test {
 
     use super::*;
 
-    #[test]
-    fn load_imm() {
-        let mut mem = [0x00; std::u16::MAX as usize];
+    struct TestMemory([u8; std::u16::MAX as usize]);
 
-        let _ = (&mut mem[0x0000..]).write(&[
+    impl TestMemory {
+        fn new() -> Self {
+            TestMemory([0x00; std::u16::MAX as usize])
+        }
+
+        fn write_bytes(&mut self, start: u16, bytes: &[u8]) {
+            (&mut self.0[start as usize..]).write(bytes);
+        }
+    }
+
+    #[test]
+    fn lda_imm() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[
             /* LDA #$01  */ 0xA9, 0x01
         ]);
 
-        let mut cpu = Cpu::new(&mut mem);
+        let mut cpu = Cpu::new(&mut mem.0);
 
-        cpu.tick();
+        cpu.tick(2);
 
         assert_eq!(cpu.a, 0x01, "A register should contain 0x01");
     }
 
     #[test]
-    fn store_abs() {
-        let mut mem = [0x00; std::u16::MAX as usize];
-
-        let _ = (&mut mem[0x0000..]).write(&[
-            /* LDA #$01  */ 0xA9, 0x01,
+    fn sta_abs() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[
             /* STA $0200 */ 0x8D, 0x00, 0x02,
         ]);
 
-        let mut cpu = Cpu::new(&mut mem);
+        let mut cpu = Cpu::new(&mut mem.0);
+        cpu.a = 0x01;
 
-        for _ in 0..2 {
-            cpu.tick();
-        }
+        cpu.tick(4);
 
-        assert_eq!(mem[0x0200], 0x01, "0x01 should be at addr 0x0200");
+        assert_eq!(mem.0[0x0200], 0x01, "0x01 should be at addr 0x0200");
     }
 
     #[test]
-    fn load_ind() {
-        let mut mem = [0x00; std::u16::MAX as usize];
-
-        let _ = (&mut mem[0xCAFE..]).write(&[0xFF]);
-
-        let _ = (&mut mem[0x0000..]).write(&[
+    fn lda_abs() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[
             /* LDA $CAFE */ 0xAD, 0xFE, 0xCA,
         ]);
 
-        let mut cpu = Cpu::new(&mut mem);
+        mem.write_bytes(0xCAFE, &[0xFF]);
 
-        cpu.tick();
+        let mut cpu = Cpu::new(&mut mem.0);
+
+        cpu.tick(4);
 
         assert_eq!(cpu.a, 0xFF, "A register should contain 0xFF");
     }
