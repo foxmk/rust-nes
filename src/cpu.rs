@@ -32,7 +32,7 @@ impl<'a> Cpu<'a> {
                     self.pc += 1;
 
                     let addr = u16::from_le_bytes([low, 0x00]);
-                    self.a = self.mem[dbg!(addr) as usize];
+                    self.a = self.mem[addr as usize];
 
                     ticks -= 3;
 
@@ -45,6 +45,26 @@ impl<'a> Cpu<'a> {
                     self.a = self.mem[u16::from_le_bytes([low + self.x, 0x00]) as usize];
 
                     ticks -= 4;
+
+                    continue;
+                }
+                0xBD => {
+                    let low = self.mem[self.pc as usize];
+                    self.pc += 1;
+                    let (addr, page_crossed) = low.overflowing_add(self.x);
+
+                    let hi = self.mem[self.pc as usize];
+                    self.pc += 1;
+
+                    let page = if page_crossed {
+                        ticks -= 5;
+                        hi + 1
+                    } else {
+                        ticks -= 4;
+                        hi
+                    };
+
+                    self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
 
                     continue;
                 }
@@ -128,6 +148,40 @@ mod test {
         cpu.tick(4);
 
         assert_eq!(cpu.a, 0xFF, "A register should contain 0xFF");
+    }
+
+    #[test]
+    fn lda_abs_x() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(START_ADDR, &[
+            /* LDA $0210,X */ 0xBD, 0x10, 0x02,
+        ]);
+
+        mem.write_bytes(0x0210 + 0x12, &[0xAD]);
+
+        let mut cpu = Cpu::new(&mut mem.0);
+        cpu.x = 0x12;
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.a, 0xAD, "A register should contain 0xAD");
+    }
+
+    #[test]
+    fn lda_abs_x_page_cross() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(START_ADDR, &[
+            /* LDA $21FF,X */ 0xBD, 0xFF, 0x21,
+        ]);
+
+        mem.write_bytes(0x21FF + 0x01, &[0xAD]); // <-- page cross
+
+        let mut cpu = Cpu::new(&mut mem.0);
+        cpu.x = 0x01;
+
+        cpu.tick(5);
+
+        assert_eq!(cpu.a, 0xAD, "A register should contain 0xAD");
     }
 
     #[test]
