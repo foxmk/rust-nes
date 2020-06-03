@@ -56,6 +56,14 @@ impl<'a> Cpu<'a> {
                     let addr = u16::from_le_bytes([low, 0x00]);
                     self.a = self.mem[addr as usize];
 
+                    if self.a == 0x00 {
+                        self.flags |= Flag::Z as u8;
+                    }
+
+                    if self.a & 0b10000000 > 0 {
+                        self.flags |= Flag::N as u8;
+                    }
+
                     ticks -= 3;
 
                     continue;
@@ -65,6 +73,14 @@ impl<'a> Cpu<'a> {
                     self.pc += 1;
 
                     self.a = self.mem[u16::from_le_bytes([low + self.x, 0x00]) as usize];
+
+                    if self.a == 0x00 {
+                        self.flags |= Flag::Z as u8;
+                    }
+
+                    if self.a & 0b10000000 > 0 {
+                        self.flags |= Flag::N as u8;
+                    }
 
                     ticks -= 4;
 
@@ -519,6 +535,58 @@ mod test {
     }
 
     #[test]
+    fn lda_zpg_sets_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xA5, 0xED]); // LDA $ED
+        mem.write_bytes(0x00ED, &[0xFE]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(3);
+
+        assert_eq!(cpu.test_flag(Flag::N), true)
+    }
+
+    #[test]
+    fn lda_zpg_sets_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xA5, 0xED]); // LDA $ED
+        mem.write_bytes(0x00ED, &[0x00]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(3);
+
+        assert_eq!(cpu.test_flag(Flag::Z), true)
+    }
+
+    #[test]
+    fn lda_zpg_clears_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xA5, 0xED]); // LDA $ED
+        mem.write_bytes(0x00ED, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(3);
+
+        assert_eq!(cpu.test_flag(Flag::N), false)
+    }
+
+    #[test]
+    fn lda_zpg_clears_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xA5, 0xED]); // LDA $ED
+        mem.write_bytes(0x00ED, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+
+        cpu.tick(3);
+
+        assert_eq!(cpu.test_flag(Flag::Z), false)
+    }
+
+    #[test]
     fn lda_zpg_x() {
         let mut mem = TestMemory::new();
         mem.write_bytes(0x0000, &[0xB5, 0xED]); // LDA $ED,X
@@ -530,6 +598,62 @@ mod test {
         cpu.tick(4);
 
         assert_eq!(cpu.get_register(Register::A), 0xCE);
+    }
+
+    #[test]
+    fn lda_zpg_x_sets_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB5, 0xED]); // LDA $ED,X
+        mem.write_bytes(0x00ED + 0x0011, &[0x81]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x11);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), true)
+    }
+
+    #[test]
+    fn lda_zpg_x_sets_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB5, 0xED]); // LDA $ED,X
+        mem.write_bytes(0x00ED + 0x0011, &[0x00]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x11);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), true)
+    }
+
+    #[test]
+    fn lda_zpg_x_clears_negative_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB5, 0xED]); // LDA $ED,X
+        mem.write_bytes(0x00ED + 0x0011, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x11);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::N), false)
+    }
+
+    #[test]
+    fn lda_zpg_x_clears_zero_flag() {
+        let mut mem = TestMemory::new();
+        mem.write_bytes(0x0000, &[0xB5, 0xED]); // LDA $ED,X
+        mem.write_bytes(0x00ED + 0x0011, &[0x01]);
+
+        let mut cpu = Cpu::with_mem(&mut mem);
+        cpu.set_register(Register::X, 0x11);
+
+        cpu.tick(4);
+
+        assert_eq!(cpu.test_flag(Flag::Z), false)
     }
 
     #[test]
