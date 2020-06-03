@@ -23,7 +23,7 @@ impl<'a> Cpu<'a> {
                     self.a = self.mem[self.pc as usize];
                     self.pc += 1;
                     ticks -= 2;
-                    return;
+                    continue;
                 }
                 0xAD => {
                     let hi = self.mem[self.pc as usize];
@@ -34,9 +34,9 @@ impl<'a> Cpu<'a> {
 
                     self.a = self.mem[u16::from_le_bytes([hi, low]) as usize];
 
-                    ticks -= 3;
+                    ticks -= 4;
 
-                    return;
+                    continue;
                 }
                 0x8D => {
                     let hi = self.mem[self.pc as usize];
@@ -49,7 +49,7 @@ impl<'a> Cpu<'a> {
 
                     ticks -= 4;
 
-                    return;
+                    continue;
                 }
                 _ => unreachable!(),
             }
@@ -71,7 +71,7 @@ mod test {
         }
 
         fn write_bytes(&mut self, start: u16, bytes: &[u8]) {
-            (&mut self.0[start as usize..]).write(bytes);
+            let _ = (&mut self.0[start as usize..]).write(bytes);
         }
     }
 
