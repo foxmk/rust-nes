@@ -14,6 +14,7 @@ struct Cpu<'a> {
     y: u8,
     pc: u16,
     flags: u8,
+    cycles_left: isize,
 }
 
 impl<'a> Cpu<'a> {
@@ -25,159 +26,173 @@ impl<'a> Cpu<'a> {
             y: 0x00,
             pc: 0x000,
             flags: 0b00000000,
+            cycles_left: 0,
         }
     }
 
-    pub fn tick(&mut self, mut ticks: usize) {
-        while ticks > 0 {
-            let byte = self.mem[self.pc as usize];
-            self.pc += 1;
+    pub fn tick(&mut self) {
+        if self.cycles_left > 0 {
+            self.cycles_left -= 1;
+            return;
+        }
 
-            match byte {
-                0xA9 => {
-                    self.a = self.mem[self.pc as usize];
-                    self.pc += 1;
-                    ticks -= 2;
+        // We are in first cycle of operation
+        self.cycles_left -= 1;
 
-                    if self.a == 0x00 {
-                        self.flags |= Flag::Z as u8;
-                    }
+        let byte = self.mem[self.pc as usize];
+        self.pc += 1;
 
-                    if self.a & 0b10000000 > 0 {
-                        self.flags |= Flag::N as u8;
-                    }
+        match byte {
+            0xA9 => {
+                self.cycles_left += 2;
 
-                    continue;
+                self.a = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
                 }
-                0xA5 => {
-                    let low = self.mem[self.pc as usize];
-                    self.pc += 1;
 
-                    let addr = u16::from_le_bytes([low, 0x00]);
-                    self.a = self.mem[addr as usize];
-
-                    if self.a == 0x00 {
-                        self.flags |= Flag::Z as u8;
-                    }
-
-                    if self.a & 0b10000000 > 0 {
-                        self.flags |= Flag::N as u8;
-                    }
-
-                    ticks -= 3;
-
-                    continue;
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
                 }
-                0xB5 => {
-                    let low = self.mem[self.pc as usize];
-                    self.pc += 1;
 
-                    self.a = self.mem[u16::from_le_bytes([low + self.x, 0x00]) as usize];
-
-                    if self.a == 0x00 {
-                        self.flags |= Flag::Z as u8;
-                    }
-
-                    if self.a & 0b10000000 > 0 {
-                        self.flags |= Flag::N as u8;
-                    }
-
-                    ticks -= 4;
-
-                    continue;
-                }
-                0xBD => {
-                    let low = self.mem[self.pc as usize];
-                    self.pc += 1;
-                    let (addr, page_crossed) = low.overflowing_add(self.x);
-
-                    let hi = self.mem[self.pc as usize];
-                    self.pc += 1;
-
-                    let page = if page_crossed {
-                        ticks -= 5;
-                        hi + 1
-                    } else {
-                        ticks -= 4;
-                        hi
-                    };
-
-                    self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
-
-                    if self.a == 0x00 {
-                        self.flags |= Flag::Z as u8;
-                    }
-
-                    if self.a & 0b10000000 > 0 {
-                        self.flags |= Flag::N as u8;
-                    }
-
-                    continue;
-                }
-                0xB9 => {
-                    let low = self.mem[self.pc as usize];
-                    self.pc += 1;
-                    let (addr, page_crossed) = low.overflowing_add(self.y);
-
-                    let hi = self.mem[self.pc as usize];
-                    self.pc += 1;
-
-                    let page = if page_crossed {
-                        ticks -= 5;
-                        hi + 1
-                    } else {
-                        ticks -= 4;
-                        hi
-                    };
-
-                    self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
-
-                    if self.a == 0x00 {
-                        self.flags |= Flag::Z as u8;
-                    }
-
-                    if self.a & 0b10000000 > 0 {
-                        self.flags |= Flag::N as u8;
-                    }
-
-                    continue;
-                }
-                0x8D => {
-                    let low = self.mem[self.pc as usize];
-                    self.pc += 1;
-
-                    let hi = self.mem[self.pc as usize];
-                    self.pc += 1;
-
-                    self.mem[u16::from_le_bytes([low, hi]) as usize] = self.a;
-
-                    ticks -= 4;
-
-                    continue;
-                }
-                0xAD => {
-                    let low = self.mem[self.pc as usize];
-                    self.pc += 1;
-
-                    let hi = self.mem[self.pc as usize];
-                    self.pc += 1;
-
-                    self.a = self.mem[u16::from_le_bytes([low, hi]) as usize];
-
-                    if self.a == 0x00 {
-                        self.flags |= Flag::Z as u8;
-                    }
-
-                    if self.a & 0b10000000 > 0 {
-                        self.flags |= Flag::N as u8;
-                    }
-
-                    ticks -= 4;
-
-                    continue;
-                }
-                _ => unreachable!(),
+                return;
             }
+            0xA5 => {
+                self.cycles_left += 3;
+
+                let low = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                let addr = u16::from_le_bytes([low, 0x00]);
+                self.a = self.mem[addr as usize];
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
+                }
+
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
+                }
+
+
+                return;
+            }
+            0xB5 => {
+                self.cycles_left += 4;
+
+                let low = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                self.a = self.mem[u16::from_le_bytes([low + self.x, 0x00]) as usize];
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
+                }
+
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
+                }
+
+
+                return;
+            }
+            0xBD => {
+                self.cycles_left += 4;
+
+                let low = self.mem[self.pc as usize];
+                self.pc += 1;
+                let (addr, page_crossed) = low.overflowing_add(self.x);
+
+                let hi = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                let page = if page_crossed {
+                    self.cycles_left += 1;
+                    hi + 1
+                } else {
+                    hi
+                };
+
+                self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
+                }
+
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
+                }
+
+                return;
+            }
+            0xB9 => {
+                self.cycles_left += 4;
+
+                let low = self.mem[self.pc as usize];
+                self.pc += 1;
+                let (addr, page_crossed) = low.overflowing_add(self.y);
+
+                let hi = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                let page = if page_crossed {
+                    self.cycles_left += 1;
+                    hi + 1
+                } else {
+                    hi
+                };
+
+                self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
+                }
+
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
+                }
+
+                return;
+            }
+            0x8D => {
+                self.cycles_left += 4;
+
+                let low = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                let hi = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                self.mem[u16::from_le_bytes([low, hi]) as usize] = self.a;
+
+
+                return;
+            }
+            0xAD => {
+                self.cycles_left += 4;
+
+                let low = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                let hi = self.mem[self.pc as usize];
+                self.pc += 1;
+
+                self.a = self.mem[u16::from_le_bytes([low, hi]) as usize];
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
+                }
+
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
+                }
+
+
+                return;
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -218,6 +233,12 @@ mod test {
             (self.flags & flag as u8) > 0
         }
 
+        fn advance(&mut self, ticks: usize) {
+            for _ in 0..ticks {
+                self.tick();
+            }
+        }
+
         fn get_register(&self, reg: Register) -> u8 {
             match reg {
                 Register::A => self.a,
@@ -242,7 +263,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(2);
+        cpu.advance(2);
 
         assert_eq!(cpu.get_register(Register::A), 0x01);
     }
@@ -254,7 +275,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(2);
+        cpu.advance(2);
 
         assert_eq!(cpu.test_flag(Flag::N), true)
     }
@@ -266,7 +287,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(2);
+        cpu.advance(2);
 
         assert_eq!(cpu.test_flag(Flag::Z), true)
     }
@@ -278,7 +299,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(2);
+        cpu.advance(2);
 
         assert_eq!(cpu.test_flag(Flag::N), false)
     }
@@ -290,7 +311,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(2);
+        cpu.advance(2);
 
         assert_eq!(cpu.test_flag(Flag::Z), false)
     }
@@ -303,7 +324,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.get_register(Register::A), 0xFF);
     }
@@ -316,7 +337,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), true)
     }
@@ -329,7 +350,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), true)
     }
@@ -342,7 +363,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), false)
     }
@@ -355,7 +376,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), false)
     }
@@ -369,7 +390,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.get_register(Register::A), 0xAD);
     }
@@ -383,7 +404,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), true)
     }
@@ -397,7 +418,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), true)
     }
@@ -411,7 +432,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), false)
     }
@@ -425,7 +446,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), false)
     }
@@ -439,7 +460,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x01);
 
-        cpu.tick(5);
+        cpu.advance(5);
 
         assert_eq!(cpu.get_register(Register::A), 0xAD);
     }
@@ -453,7 +474,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::Y, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.get_register(Register::A), 0xAD);
     }
@@ -467,7 +488,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::Y, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), true)
     }
@@ -481,7 +502,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::Y, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), true)
     }
@@ -495,7 +516,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::Y, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), false)
     }
@@ -509,7 +530,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::Y, 0x12);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), false)
     }
@@ -523,7 +544,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::Y, 0x01);
 
-        cpu.tick(5);
+        cpu.advance(5);
 
         assert_eq!(cpu.get_register(Register::A), 0xAD);
     }
@@ -536,7 +557,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(3);
+        cpu.advance(3);
 
         assert_eq!(cpu.get_register(Register::A), 0xFE);
     }
@@ -549,7 +570,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(3);
+        cpu.advance(3);
 
         assert_eq!(cpu.test_flag(Flag::N), true)
     }
@@ -562,7 +583,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(3);
+        cpu.advance(3);
 
         assert_eq!(cpu.test_flag(Flag::Z), true)
     }
@@ -575,7 +596,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(3);
+        cpu.advance(3);
 
         assert_eq!(cpu.test_flag(Flag::N), false)
     }
@@ -588,7 +609,7 @@ mod test {
 
         let mut cpu = Cpu::with_mem(&mut mem);
 
-        cpu.tick(3);
+        cpu.advance(3);
 
         assert_eq!(cpu.test_flag(Flag::Z), false)
     }
@@ -602,7 +623,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x11);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.get_register(Register::A), 0xCE);
     }
@@ -616,7 +637,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x11);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), true)
     }
@@ -630,7 +651,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x11);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), true)
     }
@@ -644,7 +665,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x11);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::N), false)
     }
@@ -658,7 +679,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::X, 0x11);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(cpu.test_flag(Flag::Z), false)
     }
@@ -671,7 +692,7 @@ mod test {
         let mut cpu = Cpu::with_mem(&mut mem);
         cpu.set_register(Register::A, 0x01);
 
-        cpu.tick(4);
+        cpu.advance(4);
 
         assert_eq!(mem.0[0x0200], 0x01);
     }
