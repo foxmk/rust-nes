@@ -224,6 +224,7 @@ mod test {
         }
     }
 
+    #[derive(Debug)]
     enum Register { A, X, Y }
 
     #[derive(Default)]
@@ -273,21 +274,12 @@ mod test {
         // }
 
         fn assert_reg(&self, reg: Register, want: u8) -> &'a TestCase {
-            match reg {
-                Register::A => {
-                    let got = self.result.a.unwrap();
-                    assert_eq!(got, want, "{} value at register A should be {:#02X?}, but was {:#02X?}", self.make_message(), want, got)
-                }
-
-                Register::X => {
-                    let got = self.result.x.unwrap();
-                    assert_eq!(got, want, "{} value at register X should be {:#02X?}, but was {:#02X?}", self.make_message(), want, got)
-                }
-                Register::Y => {
-                    let got = self.result.y.unwrap();
-                    assert_eq!(got, want, "{} value at register Y should be {:#02X?}, but was {:#02X?}", self.make_message(), want, got)
-                }
-            }
+            let got = match reg {
+                Register::A => self.result.a.unwrap(),
+                Register::X => self.result.x.unwrap(),
+                Register::Y => self.result.y.unwrap(),
+            };
+            assert_eq!(got, want, "{} value at register {:?} should be {:#02X?}, but was {:#02X?}", self.make_message(), reg, want, got);
             self
         }
 
