@@ -1,3 +1,4 @@
+#[derive(Debug, Copy, Clone)]
 enum Flag {
     N = 0b10000000,
     V = 0b01000000,
@@ -75,7 +76,6 @@ impl<'a> Cpu<'a> {
                 if self.a & 0b10000000 > 0 {
                     self.flags |= Flag::N as u8;
                 }
-
 
                 return;
             }
@@ -199,7 +199,11 @@ impl<'a> Cpu<'a> {
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
     use std::io::Write;
+
+    use Flag::*;
+    use Register::*;
 
     use super::*;
 
@@ -207,8 +211,6 @@ mod test {
     const POS_NUMBER: u8 = 0x01;
     const ZERO: u8 = 0x00;
     const NON_ZERO: u8 = 0x01;
-
-    const MEM_START: u16 = 0x0000;
 
     struct TestMemory([u8; std::u16::MAX as usize]);
 
@@ -224,476 +226,172 @@ mod test {
 
     enum Register { A, X, Y }
 
-    impl Cpu<'_> {
-        fn with_mem(mem: &mut TestMemory) -> Cpu {
-            Cpu::new(&mut mem.0)
-        }
+    #[derive(Default)]
+    struct CpuState {
+        a: Option<u8>,
+        x: Option<u8>,
+        y: Option<u8>,
+        flags: Option<u8>,
+    }
 
-        fn test_flag(&self, flag: Flag) -> bool {
-            (self.flags & flag as u8) > 0
-        }
+    struct TestCase<'a> {
+        program: Option<&'a [u8]>,
+        mems: HashMap<u16, &'a [u8]>,
+        init: CpuState,
+        result: CpuState,
+        result_mem: Vec<u8>,
+    }
 
-        fn advance(&mut self, ticks: usize) {
-            for _ in 0..ticks {
-                self.tick();
+    impl<'a> TestCase<'a> {
+        fn new(program: &'a [u8]) -> Self {
+            Self {
+                program: Some(program),
+                mems: Default::default(),
+                init: Default::default(),
+                result: Default::default(),
+                result_mem: Vec::new(),
             }
         }
 
-        fn get_register(&self, reg: Register) -> u8 {
+        fn with_mem(&mut self, start: u16, bytes: &'a [u8]) -> &'a mut TestCase {
+            self.mems.insert(start, bytes.clone());
+            self
+        }
+
+        fn with_reg(&mut self, reg: Register, byte: u8) -> &'a mut TestCase {
             match reg {
-                Register::A => self.a,
-                Register::X => self.x,
-                Register::Y => self.y,
+                A => self.init.a = Some(byte),
+                X => self.init.x = Some(byte),
+                Y => self.init.y = Some(byte),
             }
+            self
         }
 
-        fn set_register(&mut self, reg: Register, byte: u8) {
+        // fn with_flag(&mut self, flag: Flag, byte: u8) -> &'a mut T {
+        //     unimplemented!();
+        //     self
+        // }
+
+        fn assert_reg(&self, reg: Register, want: u8) -> &'a TestCase {
             match reg {
-                Register::A => self.a = byte,
-                Register::X => self.x = byte,
-                Register::Y => self.y = byte,
+                Register::A => {
+                    let got = self.result.a.unwrap();
+                    assert_eq!(got, want, "{} value at register A should be {:#02X?}, but was {:#02X?}", self.make_message(), want, got)
+                }
+
+                Register::X => {
+                    let got = self.result.x.unwrap();
+                    assert_eq!(got, want, "{} value at register X should be {:#02X?}, but was {:#02X?}", self.make_message(), want, got)
+                }
+                Register::Y => {
+                    let got = self.result.y.unwrap();
+                    assert_eq!(got, want, "{} value at register Y should be {:#02X?}, but was {:#02X?}", self.make_message(), want, got)
+                }
             }
+            self
+        }
+
+        fn assert_flag(&self, flag: Flag, want: bool) -> &'a TestCase {
+            let got = (self.result.flags.unwrap() & flag as u8) > 0;
+            assert_eq!(got, want, "{} flag {:?} should be {}", self.make_message(), flag.clone(), if want { "set" } else { "unset" });
+            self
+        }
+
+        fn assert_mem(&self, addr: u16, want: u8) -> &'a TestCase {
+            let got = self.result_mem[addr as usize];
+            assert_eq!(got, want, "{} memory at address {:#04X?} should be {:#02X?}, but was {:#02X?}", self.make_message(), addr, want, got);
+            self
+        }
+
+        fn advance(&mut self, t: usize) -> &'a mut TestCase {
+            let mut mem = TestMemory::new();
+            mem.write_bytes(0x0000, self.program.expect("Program not defined"));
+
+            for (start, bytes) in self.mems.iter() {
+                mem.write_bytes(*start, bytes);
+            }
+
+            let mut cpu = Cpu::new(&mut mem.0);
+            cpu.a = self.init.a.unwrap_or(0x00);
+            cpu.x = self.init.x.unwrap_or(0x00);
+            cpu.y = self.init.y.unwrap_or(0x00);
+            cpu.flags = self.init.flags.unwrap_or(0x00);
+
+            for _ in 0..t {
+                cpu.tick();
+            }
+
+            self.result.a = Some(cpu.a);
+            self.result.x = Some(cpu.x);
+            self.result.y = Some(cpu.y);
+            self.result.flags = Some(cpu.flags);
+            let _ = self.result_mem.write_all(&mem.0);
+            self
+        }
+
+        fn make_message(&self) -> String {
+            format!("After running program {:02X?}", self.program.unwrap())
         }
     }
 
     #[test]
     fn lda_imm() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA9, 0x01]); // LDA #$01
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(2);
-
-        assert_eq!(cpu.get_register(Register::A), 0x01);
-    }
-
-    #[test]
-    fn lda_imm_sets_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA9, NEG_NUMBER]); // LDA #$81
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(2);
-
-        assert_eq!(cpu.test_flag(Flag::N), true)
-    }
-
-    #[test]
-    fn lda_imm_sets_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA9, ZERO]); // LDA #$00
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(2);
-
-        assert_eq!(cpu.test_flag(Flag::Z), true)
-    }
-
-    #[test]
-    fn lda_imm_clears_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA9, POS_NUMBER]); // LDA #$xx
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(2);
-
-        assert_eq!(cpu.test_flag(Flag::N), false)
-    }
-
-    #[test]
-    fn lda_imm_clears_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA9, NON_ZERO]); // LDA #$01
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(2);
-
-        assert_eq!(cpu.test_flag(Flag::Z), false)
+        TestCase::new(&[0xA9, 0x01]).advance(2).assert_reg(A, 0x01);
+        TestCase::new(&[0xA9, NEG_NUMBER]).advance(2).assert_flag(N, true);
+        TestCase::new(&[0xA9, ZERO]).advance(2).assert_flag(Z, true);
+        TestCase::new(&[0xA9, POS_NUMBER]).advance(2).assert_flag(N, false);
+        TestCase::new(&[0xA9, NON_ZERO]).advance(2).assert_flag(Z, false);
     }
 
     #[test]
     fn lda_abs() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
-        mem.write_bytes(0xCAFE, &[0xFF]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.get_register(Register::A), 0xFF);
-    }
-
-    #[test]
-    fn lda_abs_sets_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
-        mem.write_bytes(0xCAFE, &[NEG_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), true)
-    }
-
-    #[test]
-    fn lda_abs_sets_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
-        mem.write_bytes(0xCAFE, &[ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), true)
-    }
-
-    #[test]
-    fn lda_abs_clears_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
-        mem.write_bytes(0xCAFE, &[POS_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), false)
-    }
-
-    #[test]
-    fn lda_abs_clears_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xAD, 0xFE, 0xCA]); // LDA $CAFE
-        mem.write_bytes(0xCAFE, &[NON_ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), false)
+        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(4).assert_reg(A, 0xFF);
+        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
+        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO]).advance(4).assert_flag(Z, true);
+        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER]).advance(4).assert_flag(N, false);
+        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO]).advance(4).assert_flag(Z, false);
     }
 
     #[test]
     fn lda_abs_x() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xBD, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[0xAD]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.get_register(Register::A), 0xAD);
-    }
-
-    #[test]
-    fn lda_abs_x_sets_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xBD, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[NEG_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), true)
-    }
-
-    #[test]
-    fn lda_abs_x_sets_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xBD, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), true)
-    }
-
-    #[test]
-    fn lda_abs_x_clears_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xBD, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[POS_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), false)
-    }
-
-    #[test]
-    fn lda_abs_x_clears_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xBD, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[NON_ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), false)
-    }
-
-    #[test]
-    fn lda_abs_x_page_cross() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xBD, 0xFF, 0x21]); // LDA $21FF,X
-        mem.write_bytes(0x21FF + 0x01, &[0xAD]); // <-- page cross
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x01);
-
-        cpu.advance(5);
-
-        assert_eq!(cpu.get_register(Register::A), 0xAD);
+        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[0xFF]).with_reg(X, 0x12).advance(4).assert_reg(A, 0xFF);
+        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NEG_NUMBER]).with_reg(X, 0x12).advance(4).assert_flag(N, true);
+        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[ZERO]).with_reg(X, 0x12).advance(4).assert_flag(Z, true);
+        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[POS_NUMBER]).with_reg(X, 0x12).advance(4).assert_flag(N, false);
+        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NON_ZERO]).with_reg(X, 0x12).advance(4).assert_flag(Z, false);
+        TestCase::new(&[0xBD, 0xFF, 0x21]).with_mem(0x21FF + 0x01, &[0xAD]).with_reg(X, 0x01).advance(5).assert_reg(A, 0xAD);
     }
 
     #[test]
     fn lda_abs_y() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB9, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[0xAD]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::Y, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.get_register(Register::A), 0xAD);
-    }
-
-    #[test]
-    fn lda_abs_y_sets_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB9, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[NEG_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::Y, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), true)
-    }
-
-    #[test]
-    fn lda_abs_y_sets_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB9, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::Y, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), true)
-    }
-
-    #[test]
-    fn lda_abs_y_clears_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB9, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[POS_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::Y, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), false)
-    }
-
-    #[test]
-    fn lda_abs_y_clears_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB9, 0x10, 0x02]); // LDA $0210,X
-        mem.write_bytes(0x0210 + 0x12, &[NON_ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::Y, 0x12);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), false)
-    }
-
-    #[test]
-    fn lda_abs_y_page_cross() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB9, 0xFF, 0x21]); // LDA $21FF,X
-        mem.write_bytes(0x21FF + 0x01, &[0xAD]); // <-- page cross
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::Y, 0x01);
-
-        cpu.advance(5);
-
-        assert_eq!(cpu.get_register(Register::A), 0xAD);
+        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[0xFF]).with_reg(Y, 0x12).advance(4).assert_reg(A, 0xFF);
+        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NEG_NUMBER]).with_reg(Y, 0x12).advance(4).assert_flag(N, true);
+        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[ZERO]).with_reg(Y, 0x12).advance(4).assert_flag(Z, true);
+        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[POS_NUMBER]).with_reg(Y, 0x12).advance(4).assert_flag(N, false);
+        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NON_ZERO]).with_reg(Y, 0x12).advance(4).assert_flag(Z, false);
+        TestCase::new(&[0xB9, 0xFF, 0x21]).with_mem(0x21FF + 0x01, &[0xAD]).with_reg(Y, 0x01).advance(5).assert_reg(A, 0xAD);
     }
 
     #[test]
     fn lda_zpg() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA5, 0xED]); // LDA $ED
-        mem.write_bytes(0x00ED, &[0xFE]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(3);
-
-        assert_eq!(cpu.get_register(Register::A), 0xFE);
-    }
-
-    #[test]
-    fn lda_zpg_sets_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA5, 0xED]); // LDA $ED
-        mem.write_bytes(0x00ED, &[NEG_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(3);
-
-        assert_eq!(cpu.test_flag(Flag::N), true)
-    }
-
-    #[test]
-    fn lda_zpg_sets_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA5, 0xED]); // LDA $ED
-        mem.write_bytes(0x00ED, &[ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(3);
-
-        assert_eq!(cpu.test_flag(Flag::Z), true)
-    }
-
-    #[test]
-    fn lda_zpg_clears_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA5, 0xED]); // LDA $ED
-        mem.write_bytes(0x00ED, &[POS_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(3);
-
-        assert_eq!(cpu.test_flag(Flag::N), false)
-    }
-
-    #[test]
-    fn lda_zpg_clears_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xA5, 0xED]); // LDA $ED
-        mem.write_bytes(0x00ED, &[NON_ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-
-        cpu.advance(3);
-
-        assert_eq!(cpu.test_flag(Flag::Z), false)
+        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[0xFF]).advance(3).assert_reg(A, 0xFF);
+        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[NEG_NUMBER]).advance(3).assert_flag(N, true);
+        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[ZERO]).advance(3).assert_flag(Z, true);
+        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[POS_NUMBER]).advance(3).assert_flag(N, false);
+        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[NON_ZERO]).advance(3).assert_flag(Z, false);
     }
 
     #[test]
     fn lda_zpg_x() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB5, 0xED]); // LDA $ED,X
-        mem.write_bytes(0x00ED + 0x0011, &[0xCE]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x11);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.get_register(Register::A), 0xCE);
-    }
-
-    #[test]
-    fn lda_zpg_x_sets_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB5, 0xED]); // LDA $ED,X
-        mem.write_bytes(0x00ED + 0x0011, &[NEG_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x11);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), true)
-    }
-
-    #[test]
-    fn lda_zpg_x_sets_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB5, 0xED]); // LDA $ED,X
-        mem.write_bytes(0x00ED + 0x0011, &[ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x11);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), true)
-    }
-
-    #[test]
-    fn lda_zpg_x_clears_negative_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB5, 0xED]); // LDA $ED,X
-        mem.write_bytes(0x00ED + 0x0011, &[POS_NUMBER]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x11);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::N), false)
-    }
-
-    #[test]
-    fn lda_zpg_x_clears_zero_flag() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0xB5, 0xED]); // LDA $ED,X
-        mem.write_bytes(0x00ED + 0x0011, &[NON_ZERO]);
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::X, 0x11);
-
-        cpu.advance(4);
-
-        assert_eq!(cpu.test_flag(Flag::Z), false)
+        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[0xFF]).with_reg(X, 0x11).advance(4).assert_reg(A, 0xFF);
+        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[NEG_NUMBER]).with_reg(X, 0x11).advance(4).assert_flag(N, true);
+        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[ZERO]).with_reg(X, 0x11).advance(4).assert_flag(Z, true);
+        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[POS_NUMBER]).with_reg(X, 0x11).advance(4).assert_flag(N, false);
+        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[NON_ZERO]).with_reg(X, 0x11).advance(4).assert_flag(Z, false);
     }
 
     #[test]
     fn sta_abs() {
-        let mut mem = TestMemory::new();
-        mem.write_bytes(MEM_START, &[0x8D, 0x00, 0x02]); // STA $0200
-
-        let mut cpu = Cpu::with_mem(&mut mem);
-        cpu.set_register(Register::A, 0x01);
-
-        cpu.advance(4);
-
-        assert_eq!(mem.0[0x0200], 0x01);
+        TestCase::new(&[0x8D, 0x00, 0x02]).with_reg(A, 0x01).advance(4).assert_mem(0x0200, 0x01);
     }
 }
