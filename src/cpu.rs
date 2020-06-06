@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+use std::ops::IndexMut;
+use std::rc::Rc;
+
 #[derive(Debug, Copy, Clone)]
 enum Flag {
     N = 0b10000000,
@@ -8,8 +12,10 @@ enum Flag {
     C = 0b00000001,
 }
 
-struct Cpu<'a> {
-    mem: &'a mut [u8],
+type Memory = dyn IndexMut<u16, Output=u8>;
+
+struct Cpu {
+    mem: Rc<RefCell<Memory>>,
     a: u8,
     x: u8,
     y: u8,
@@ -18,8 +24,8 @@ struct Cpu<'a> {
     cycles_left: isize,
 }
 
-impl<'a> Cpu<'a> {
-    pub fn new(mem: &'a mut [u8]) -> Self {
+impl Cpu {
+    pub fn new(mem: Rc<RefCell<Memory>>) -> Self {
         Self {
             mem,
             a: 0x00,
@@ -32,6 +38,8 @@ impl<'a> Cpu<'a> {
     }
 
     pub fn tick(&mut self) {
+        let mut mem = self.mem.borrow_mut();
+
         if self.cycles_left > 0 {
             self.cycles_left -= 1;
             return;
@@ -40,14 +48,14 @@ impl<'a> Cpu<'a> {
         // We are in first cycle of operation
         self.cycles_left -= 1;
 
-        let byte = self.mem[self.pc as usize];
+        let byte = mem[self.pc];
         self.pc += 1;
 
         match byte {
             0xA9 => {
                 self.cycles_left += 2;
 
-                self.a = self.mem[self.pc as usize];
+                self.a = mem[self.pc];
                 self.pc += 1;
 
                 if self.a == 0x00 {
@@ -63,11 +71,11 @@ impl<'a> Cpu<'a> {
             0xA5 => {
                 self.cycles_left += 3;
 
-                let low = self.mem[self.pc as usize];
+                let low = mem[self.pc];
                 self.pc += 1;
 
                 let addr = u16::from_le_bytes([low, 0x00]);
-                self.a = self.mem[addr as usize];
+                self.a = mem[addr];
 
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
@@ -82,10 +90,10 @@ impl<'a> Cpu<'a> {
             0xB5 => {
                 self.cycles_left += 4;
 
-                let low = self.mem[self.pc as usize];
+                let low = mem[self.pc];
                 self.pc += 1;
 
-                self.a = self.mem[u16::from_le_bytes([low + self.x, 0x00]) as usize];
+                self.a = mem[u16::from_le_bytes([low + self.x, 0x00])];
 
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
@@ -101,11 +109,11 @@ impl<'a> Cpu<'a> {
             0xBD => {
                 self.cycles_left += 4;
 
-                let low = self.mem[self.pc as usize];
+                let low = mem[self.pc];
                 self.pc += 1;
                 let (addr, page_crossed) = low.overflowing_add(self.x);
 
-                let hi = self.mem[self.pc as usize];
+                let hi = mem[self.pc];
                 self.pc += 1;
 
                 let page = if page_crossed {
@@ -115,7 +123,7 @@ impl<'a> Cpu<'a> {
                     hi
                 };
 
-                self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
+                self.a = mem[u16::from_le_bytes([addr, page])];
 
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
@@ -130,11 +138,11 @@ impl<'a> Cpu<'a> {
             0xB9 => {
                 self.cycles_left += 4;
 
-                let low = self.mem[self.pc as usize];
+                let low = mem[self.pc];
                 self.pc += 1;
                 let (addr, page_crossed) = low.overflowing_add(self.y);
 
-                let hi = self.mem[self.pc as usize];
+                let hi = mem[self.pc];
                 self.pc += 1;
 
                 let page = if page_crossed {
@@ -144,7 +152,7 @@ impl<'a> Cpu<'a> {
                     hi
                 };
 
-                self.a = self.mem[u16::from_le_bytes([addr, page]) as usize];
+                self.a = mem[u16::from_le_bytes([addr, page])];
 
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
@@ -159,27 +167,26 @@ impl<'a> Cpu<'a> {
             0x8D => {
                 self.cycles_left += 4;
 
-                let low = self.mem[self.pc as usize];
+                let low = mem[self.pc];
                 self.pc += 1;
 
-                let hi = self.mem[self.pc as usize];
+                let hi = mem[self.pc];
                 self.pc += 1;
 
-                self.mem[u16::from_le_bytes([low, hi]) as usize] = self.a;
-
+                mem[u16::from_le_bytes([low, hi])] = self.a;
 
                 return;
             }
             0xAD => {
                 self.cycles_left += 4;
 
-                let low = self.mem[self.pc as usize];
+                let low = mem[self.pc];
                 self.pc += 1;
 
-                let hi = self.mem[self.pc as usize];
+                let hi = mem[self.pc];
                 self.pc += 1;
 
-                self.a = self.mem[u16::from_le_bytes([low, hi]) as usize];
+                self.a = mem[u16::from_le_bytes([low, hi])];
 
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
@@ -199,8 +206,8 @@ impl<'a> Cpu<'a> {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
     use std::io::Write;
+    use std::ops::Index;
 
     use Flag::*;
     use Register::*;
@@ -212,178 +219,207 @@ mod test {
     const ZERO: u8 = 0x00;
     const NON_ZERO: u8 = 0x01;
 
-    struct TestMemory([u8; std::u16::MAX as usize]);
+    struct ArrayMemory([u8; u16::MAX as usize]);
 
-    impl TestMemory {
-        fn new() -> Self {
-            TestMemory([0x00; std::u16::MAX as usize])
+    impl Index<u16> for ArrayMemory {
+        type Output = u8;
+
+        fn index(&self, index: u16) -> &Self::Output {
+            &self.0[index as usize]
         }
+    }
 
-        fn write_bytes(&mut self, start: u16, bytes: &[u8]) {
-            let _ = (&mut self.0[start as usize..]).write(bytes);
+    impl IndexMut<u16> for ArrayMemory {
+        fn index_mut(&mut self, index: u16) -> &mut Self::Output {
+            &mut self.0[index as usize]
         }
     }
 
     #[derive(Debug)]
     enum Register { A, X, Y }
 
-    #[derive(Default)]
-    struct CpuState {
-        a: Option<u8>,
-        x: Option<u8>,
-        y: Option<u8>,
-        flags: Option<u8>,
+    struct TestCase {
+        message: String,
+        mem: Rc<RefCell<ArrayMemory>>,
+        cpu: Cpu,
     }
 
-    struct TestCase<'a> {
-        program: Option<&'a [u8]>,
-        mems: HashMap<u16, &'a [u8]>,
-        init: CpuState,
-        result: CpuState,
-        result_mem: Vec<u8>,
+    fn run(program: &[u8]) -> TestCase {
+        let mem = Rc::new(RefCell::new(ArrayMemory([0x00; u16::MAX as usize])));
+        let cpu = Cpu::new(mem.clone());
+
+        let _ = (&mut RefCell::borrow_mut(&mem).0[0x0000..]).write_all(program);
+
+        TestCase { message: format!("After running CPU with program {:02X?}", program), mem, cpu }
     }
 
-    impl<'a> TestCase<'a> {
-        fn new(program: &'a [u8]) -> Self {
-            Self {
-                program: Some(program),
-                mems: Default::default(),
-                init: Default::default(),
-                result: Default::default(),
-                result_mem: Vec::new(),
-            }
-        }
-
-        fn with_mem(&mut self, start: u16, bytes: &'a [u8]) -> &'a mut TestCase {
-            self.mems.insert(start, bytes.clone());
+    impl TestCase {
+        fn with_mem(&mut self, start: u16, bytes: &[u8]) -> &mut TestCase {
+            self.message = format!("{} and with memory {:02X?} at 0x{:02X?}", self.message, bytes, start);
+            let _ = (&mut RefCell::borrow_mut(&self.mem).0[start as usize..]).write_all(bytes);
             self
         }
 
-        fn with_reg(&mut self, reg: Register, byte: u8) -> &'a mut TestCase {
+        fn with_reg(&mut self, reg: Register, byte: u8) -> &mut TestCase {
+            self.message = format!("{} and with register {:?} set to 0x{:02X?}", self.message, reg, byte);
             match reg {
-                A => self.init.a = Some(byte),
-                X => self.init.x = Some(byte),
-                Y => self.init.y = Some(byte),
+                A => self.cpu.a = byte,
+                X => self.cpu.x = byte,
+                Y => self.cpu.y = byte,
             }
             self
         }
 
-        // fn with_flag(&mut self, flag: Flag, byte: u8) -> &'a mut T {
-        //     unimplemented!();
-        //     self
-        // }
+        fn with_flag(&mut self, flag: Flag, val: bool) -> &mut TestCase {
+            self.message = format!("{} and with flag {:?} {}", self.message, flag, if val { "set" } else { "unset" });
+            self.cpu.flags ^= flag as u8;
+            self
+        }
 
-        fn assert_reg(&self, reg: Register, want: u8) -> &'a TestCase {
+        fn assert_reg(&self, reg: Register, want: u8) -> &TestCase {
             let got = match reg {
-                Register::A => self.result.a.unwrap(),
-                Register::X => self.result.x.unwrap(),
-                Register::Y => self.result.y.unwrap(),
+                Register::A => self.cpu.a,
+                Register::X => self.cpu.x,
+                Register::Y => self.cpu.y,
             };
-            assert_eq!(got, want, "{} value at register {:?} should be {:#02X?}, but was {:#02X?}", self.make_message(), reg, want, got);
+            assert_eq!(got, want, "{} value at register {:?} should be 0x{:02X?}, but was 0x{:02X?}", self.message, reg, want, got);
             self
         }
 
-        fn assert_flag(&self, flag: Flag, want: bool) -> &'a TestCase {
-            let got = (self.result.flags.unwrap() & flag as u8) > 0;
-            assert_eq!(got, want, "{} flag {:?} should be {}", self.make_message(), flag.clone(), if want { "set" } else { "unset" });
+        fn assert_flag(&self, flag: Flag, want: bool) -> &TestCase {
+            let got = (self.cpu.flags & flag as u8) > 0;
+            assert_eq!(got, want, "{} flag {:?} should be {}", self.message, flag.clone(), if want { "set" } else { "unset" });
             self
         }
 
-        fn assert_mem(&self, addr: u16, want: u8) -> &'a TestCase {
-            let got = self.result_mem[addr as usize];
-            assert_eq!(got, want, "{} memory at address {:#04X?} should be {:#02X?}, but was {:#02X?}", self.make_message(), addr, want, got);
+        fn assert_mem(&self, addr: u16, want: u8) -> &TestCase {
+            let got = RefCell::borrow(&self.mem)[addr];
+            assert_eq!(got, want, "{} memory at address 0x{:04X?} should be 0x{:#02X?}, but was 0x{:02X?}", self.message, addr, want, got);
             self
         }
 
-        fn advance(&mut self, t: usize) -> &'a mut TestCase {
-            let mut mem = TestMemory::new();
-            mem.write_bytes(0x0000, self.program.expect("Program not defined"));
-
-            for (start, bytes) in self.mems.iter() {
-                mem.write_bytes(*start, bytes);
-            }
-
-            let mut cpu = Cpu::new(&mut mem.0);
-            cpu.a = self.init.a.unwrap_or(0x00);
-            cpu.x = self.init.x.unwrap_or(0x00);
-            cpu.y = self.init.y.unwrap_or(0x00);
-            cpu.flags = self.init.flags.unwrap_or(0x00);
-
+        fn advance(&mut self, t: usize) -> &TestCase {
             for _ in 0..t {
-                cpu.tick();
+                self.cpu.tick();
             }
-
-            self.result.a = Some(cpu.a);
-            self.result.x = Some(cpu.x);
-            self.result.y = Some(cpu.y);
-            self.result.flags = Some(cpu.flags);
-            let _ = self.result_mem.write_all(&mem.0);
             self
-        }
-
-        fn make_message(&self) -> String {
-            format!("After running program {:02X?}", self.program.unwrap())
         }
     }
 
     #[test]
     fn lda_imm() {
-        TestCase::new(&[0xA9, 0x01]).advance(2).assert_reg(A, 0x01);
-        TestCase::new(&[0xA9, NEG_NUMBER]).advance(2).assert_flag(N, true);
-        TestCase::new(&[0xA9, ZERO]).advance(2).assert_flag(Z, true);
-        TestCase::new(&[0xA9, POS_NUMBER]).advance(2).assert_flag(N, false);
-        TestCase::new(&[0xA9, NON_ZERO]).advance(2).assert_flag(Z, false);
+        run(&[0xA9, 0x01]).advance(2).assert_reg(A, 0x01);
+    }
+
+    #[test]
+    fn lda_imm_zero_flag() {
+        run(&[0xA9, NEG_NUMBER]).advance(2).assert_flag(N, true);
+        run(&[0xA9, POS_NUMBER]).advance(2).assert_flag(N, false);
+    }
+
+    #[test]
+    fn lda_imm_negative_flag() {
+        run(&[0xA9, ZERO]).advance(2).assert_flag(Z, true);
+        run(&[0xA9, NON_ZERO]).advance(2).assert_flag(Z, false);
     }
 
     #[test]
     fn lda_abs() {
-        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(4).assert_reg(A, 0xFF);
-        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
-        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO]).advance(4).assert_flag(Z, true);
-        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER]).advance(4).assert_flag(N, false);
-        TestCase::new(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO]).advance(4).assert_flag(Z, false);
+        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(4).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_abs_negative_flag() {
+        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
+        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER]).advance(4).assert_flag(N, false);
+    }
+
+    #[test]
+    fn lda_abs_zero_flag() {
+        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO]).advance(4).assert_flag(Z, true);
+        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO]).advance(4).assert_flag(Z, false);
     }
 
     #[test]
     fn lda_abs_x() {
-        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[0xFF]).with_reg(X, 0x12).advance(4).assert_reg(A, 0xFF);
-        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NEG_NUMBER]).with_reg(X, 0x12).advance(4).assert_flag(N, true);
-        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[ZERO]).with_reg(X, 0x12).advance(4).assert_flag(Z, true);
-        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[POS_NUMBER]).with_reg(X, 0x12).advance(4).assert_flag(N, false);
-        TestCase::new(&[0xBD, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NON_ZERO]).with_reg(X, 0x12).advance(4).assert_flag(Z, false);
-        TestCase::new(&[0xBD, 0xFF, 0x21]).with_mem(0x21FF + 0x01, &[0xAD]).with_reg(X, 0x01).advance(5).assert_reg(A, 0xAD);
+        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[0xFF]).advance(4).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_abs_x_negative_flag() {
+        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
+        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[POS_NUMBER]).advance(4).assert_flag(N, false);
+    }
+
+    #[test]
+    fn lda_abs_x_zero_flag() {
+        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[ZERO]).advance(4).assert_flag(Z, true);
+        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[NON_ZERO]).advance(4).assert_flag(Z, false);
+    }
+
+    #[test]
+    fn lda_abs_x_page_cross() {
+        run(&[0xBD, 0xFF, 0x21]).with_reg(X, 0x01).with_mem(0x21FF + 0x01, &[0xAD]).advance(5).assert_reg(A, 0xAD);
     }
 
     #[test]
     fn lda_abs_y() {
-        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[0xFF]).with_reg(Y, 0x12).advance(4).assert_reg(A, 0xFF);
-        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NEG_NUMBER]).with_reg(Y, 0x12).advance(4).assert_flag(N, true);
-        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[ZERO]).with_reg(Y, 0x12).advance(4).assert_flag(Z, true);
-        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[POS_NUMBER]).with_reg(Y, 0x12).advance(4).assert_flag(N, false);
-        TestCase::new(&[0xB9, 0x10, 0x02]).with_mem(0x0210 + 0x12, &[NON_ZERO]).with_reg(Y, 0x12).advance(4).assert_flag(Z, false);
-        TestCase::new(&[0xB9, 0xFF, 0x21]).with_mem(0x21FF + 0x01, &[0xAD]).with_reg(Y, 0x01).advance(5).assert_reg(A, 0xAD);
+        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x0012, &[0xFF]).advance(4).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_abs_y_negative_flag() {
+        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
+        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[POS_NUMBER]).advance(4).assert_flag(N, false);
+    }
+
+    #[test]
+    fn lda_abs_y_zero_flag() {
+        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[ZERO]).advance(4).assert_flag(Z, true);
+        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[NON_ZERO]).advance(4).assert_flag(Z, false);
+    }
+
+    #[test]
+    fn lda_abs_y_page_cross() {
+        run(&[0xB9, 0xFF, 0x21]).with_reg(Y, 0x01).with_mem(0x21FF + 0x01, &[0xAD]).advance(5).assert_reg(A, 0xAD);
     }
 
     #[test]
     fn lda_zpg() {
-        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[0xFF]).advance(3).assert_reg(A, 0xFF);
-        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[NEG_NUMBER]).advance(3).assert_flag(N, true);
-        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[ZERO]).advance(3).assert_flag(Z, true);
-        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[POS_NUMBER]).advance(3).assert_flag(N, false);
-        TestCase::new(&[0xA5, 0xED]).with_mem(0x00ED, &[NON_ZERO]).advance(3).assert_flag(Z, false);
+        run(&[0xA5, 0xED]).with_mem(0x00ED, &[0xFF]).advance(3).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_zpg_negative_flag() {
+        run(&[0xA5, 0xED]).with_mem(0x00ED, &[NEG_NUMBER]).advance(3).assert_flag(N, true);
+        run(&[0xA5, 0xED]).with_mem(0x00ED, &[POS_NUMBER]).advance(3).assert_flag(N, false);
+    }
+
+    #[test]
+    fn lda_zpg_zero_flag() {
+        run(&[0xA5, 0xED]).with_mem(0x00ED, &[ZERO]).advance(3).assert_flag(Z, true);
+        run(&[0xA5, 0xED]).with_mem(0x00ED, &[NON_ZERO]).advance(3).assert_flag(Z, false);
     }
 
     #[test]
     fn lda_zpg_x() {
-        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[0xFF]).with_reg(X, 0x11).advance(4).assert_reg(A, 0xFF);
-        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[NEG_NUMBER]).with_reg(X, 0x11).advance(4).assert_flag(N, true);
-        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[ZERO]).with_reg(X, 0x11).advance(4).assert_flag(Z, true);
-        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[POS_NUMBER]).with_reg(X, 0x11).advance(4).assert_flag(N, false);
-        TestCase::new(&[0xB5, 0xED]).with_mem(0x00ED + 0x0011, &[NON_ZERO]).with_reg(X, 0x11).advance(4).assert_flag(Z, false);
+        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[0xFF]).advance(4).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_zpg_x_negative_flag() {
+        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
+        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[POS_NUMBER]).advance(4).assert_flag(N, false);
+    }
+
+    #[test]
+    fn lda_zpg_x_zero_flag() {
+        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[ZERO]).advance(4).assert_flag(Z, true);
+        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[NON_ZERO]).advance(4).assert_flag(Z, false);
     }
 
     #[test]
     fn sta_abs() {
-        TestCase::new(&[0x8D, 0x00, 0x02]).with_reg(A, 0x01).advance(4).assert_mem(0x0200, 0x01);
+        run(&[0x8D, 0x00, 0x02]).with_reg(A, 0x01).advance(4).assert_mem(0x0200, 0x01);
     }
 }
