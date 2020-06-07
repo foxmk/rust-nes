@@ -164,19 +164,6 @@ impl Cpu {
 
                 return;
             }
-            0x8D => {
-                self.cycles_left += 4;
-
-                let low = mem[self.pc];
-                self.pc += 1;
-
-                let hi = mem[self.pc];
-                self.pc += 1;
-
-                mem[u16::from_le_bytes([low, hi])] = self.a;
-
-                return;
-            }
             0xAD => {
                 self.cycles_left += 4;
 
@@ -199,7 +186,40 @@ impl Cpu {
 
                 return;
             }
-            _ => unreachable!(),
+            0xA1 => {
+                self.cycles_left += 6;
+
+                let operand = mem[self.pc];
+                self.pc += 1;
+
+                let zpg_addr = u16::from_le_bytes([operand, 0x00]);
+                let ind_addr = zpg_addr + self.x as u16;
+                let eff_addr = u16::from_le_bytes(dbg!([mem[ind_addr + 1], mem[ind_addr]]));
+
+                self.a = dbg!(mem[dbg!(eff_addr)]);
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
+                }
+
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
+                }
+            }
+            0x8D => {
+                self.cycles_left += 4;
+
+                let low = mem[self.pc];
+                self.pc += 1;
+
+                let hi = mem[self.pc];
+                self.pc += 1;
+
+                mem[u16::from_le_bytes([low, hi])] = self.a;
+
+                return;
+            }
+            _ => unimplemented!("Opcode 0x{:02X?} is not implemented", byte),
         }
     }
 }
@@ -416,6 +436,28 @@ mod test {
     fn lda_zpg_x_zero_flag() {
         run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[ZERO]).advance(4).assert_flag(Z, true);
         run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[NON_ZERO]).advance(4).assert_flag(Z, false);
+    }
+
+    #[test]
+    fn lda_ind_x() {
+        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_ind_x_add_with_overflow() {
+        run(&[0xA1, 0xFF]).with_reg(X, 0xFF).with_mem(0x00FF + 0xFF, &[0xCA, 0xFE]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_ind_x_negative_flag() {
+        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[POS_NUMBER]).advance(6).assert_flag(N, false);
+        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(6).assert_flag(N, true);
+    }
+
+    #[test]
+    fn lda_ind_x_zero_flag() {
+        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[ZERO]).advance(6).assert_flag(Z, true);
+        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[NON_ZERO]).advance(6).assert_flag(Z, false);
     }
 
     #[test]
