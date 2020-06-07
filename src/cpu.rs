@@ -194,9 +194,28 @@ impl Cpu {
 
                 let zpg_addr = u16::from_le_bytes([operand, 0x00]);
                 let ind_addr = zpg_addr + self.x as u16;
-                let eff_addr = u16::from_le_bytes(dbg!([mem[ind_addr + 1], mem[ind_addr]]));
+                let eff_addr = u16::from_le_bytes([mem[ind_addr], mem[ind_addr + 1]]);
 
-                self.a = dbg!(mem[dbg!(eff_addr)]);
+                self.a = mem[eff_addr];
+
+                if self.a == 0x00 {
+                    self.flags |= Flag::Z as u8;
+                }
+
+                if self.a & 0b10000000 > 0 {
+                    self.flags |= Flag::N as u8;
+                }
+            }
+            0xB1 => {
+                self.cycles_left += 6;
+
+                let operand = mem[self.pc];
+                self.pc += 1;
+
+                let zpg_addr = u16::from_le_bytes([operand, 0x00]);
+                let eff_addr = u16::from_le_bytes([mem[zpg_addr], mem[zpg_addr + 1]]) + self.y as u16;
+
+                self.a = mem[eff_addr];
 
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
@@ -439,29 +458,46 @@ mod test {
     }
 
     #[test]
-    fn lda_ind_x() {
-        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
+    fn lda_x_ind() {
+        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
     }
 
     #[test]
-    fn lda_ind_x_add_with_overflow() {
-        run(&[0xA1, 0xFF]).with_reg(X, 0xFF).with_mem(0x00FF + 0xFF, &[0xCA, 0xFE]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
+    fn lda_x_ind_add_with_overflow() {
+        run(&[0xA1, 0xFF]).with_reg(X, 0xFF).with_mem(0x00FF + 0xFF, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
     }
 
     #[test]
-    fn lda_ind_x_negative_flag() {
-        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[POS_NUMBER]).advance(6).assert_flag(N, false);
-        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(6).assert_flag(N, true);
+    fn lda_x_ind_negative_flag() {
+        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER]).advance(6).assert_flag(N, false);
+        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(6).assert_flag(N, true);
     }
 
     #[test]
-    fn lda_ind_x_zero_flag() {
-        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[ZERO]).advance(6).assert_flag(Z, true);
-        run(&[0xA1, 0xAB]).with_reg(X, 0x11).with_mem(0x00AB + 0x11, &[0xCA, 0xFE]).with_mem(0xCAFE, &[NON_ZERO]).advance(6).assert_flag(Z, false);
+    fn lda_x_ind_zero_flag() {
+        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO]).advance(6).assert_flag(Z, true);
+        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO]).advance(6).assert_flag(Z, false);
     }
 
     #[test]
-    fn sta_abs() {
-        run(&[0x8D, 0x00, 0x02]).with_reg(A, 0x01).advance(4).assert_mem(0x0200, 0x01);
+    fn lda_ind_y() {
+        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[0xFF]).advance(5).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_ind_y_add_with_overflow() {
+        run(&[0xB1, 0xFF]).with_reg(Y, 0xFF).with_mem(0x00FF, &[0xFE, 0xCA]).with_mem(0xCAFE + 0xFF, &[0xFF]).advance(6).assert_reg(A, 0xFF);
+    }
+
+    #[test]
+    fn lda_ind_y_negative_flag() {
+        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[POS_NUMBER]).advance(6).assert_flag(N, false);
+        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NEG_NUMBER]).advance(6).assert_flag(N, true);
+    }
+
+    #[test]
+    fn lda_ind_y_zero_flag() {
+        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[ZERO]).advance(6).assert_flag(Z, true);
+        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NON_ZERO]).advance(6).assert_flag(Z, false);
     }
 }
