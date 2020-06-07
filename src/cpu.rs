@@ -12,16 +12,103 @@ enum Flag {
     C = 0b00000001,
 }
 
-type Memory = dyn IndexMut<u16, Output=u8>;
+type Flags = u8;
+type Addr = u16;
+type OpLength = u8;
+type OpCycles = usize;
+type IsPageCrossed = bool;
+type Memory = dyn IndexMut<Addr, Output=u8>;
+
+pub enum Cmd {
+    ADC,
+    AND,
+    ASL,
+    BCC,
+    BCS,
+    BEQ,
+    BIT,
+    BMI,
+    BNE,
+    BPL,
+    BRK,
+    BVC,
+    BVS,
+    CLC,
+    CLD,
+    CLI,
+    CLV,
+    CMP,
+    CPX,
+    CPY,
+    DEC,
+    DEX,
+    DEY,
+    EOR,
+    INC,
+    INX,
+    INY,
+    JMP,
+    JSR,
+    LDA,
+    LDX,
+    LDY,
+    LSR,
+    NOP,
+    ORA,
+    PHA,
+    PHP,
+    PLA,
+    PLP,
+    ROL,
+    ROR,
+    RTI,
+    RTS,
+    SBC,
+    SEC,
+    SED,
+    SEI,
+    STA,
+    STX,
+    STY,
+    TAX,
+    TAY,
+    TSX,
+    TXA,
+    TXS,
+    TYA,
+}
+
+enum In {
+    Imp,
+    Imm(u8),
+    Rel(i8),
+    Addr(u16),
+}
+
+enum AddrMode {
+    Acc,
+    Imp,
+    Imm,
+    Zpg,
+    ZpgX,
+    ZpgY,
+    Rel,
+    Abs,
+    AbsX,
+    AbsY,
+    Ind,
+    XInd,
+    IndY,
+}
 
 struct Cpu {
     mem: Rc<RefCell<Memory>>,
     a: u8,
     x: u8,
     y: u8,
-    pc: u16,
-    flags: u8,
-    cycles_left: isize,
+    pc: Addr,
+    flags: Flags,
+    cycles_left: usize,
 }
 
 impl Cpu {
@@ -31,33 +118,100 @@ impl Cpu {
             a: 0x00,
             x: 0x00,
             y: 0x00,
-            pc: 0x000,
+            pc: 0x0000,
             flags: 0b00000000,
             cycles_left: 0,
         }
     }
 
     pub fn tick(&mut self) {
-        let mut mem = self.mem.borrow_mut();
-
         if self.cycles_left > 0 {
             self.cycles_left -= 1;
             return;
         }
 
-        // We are in first cycle of operation
-        self.cycles_left -= 1;
+        let mem = self.mem.borrow_mut();
 
-        let byte = mem[self.pc];
-        self.pc += 1;
+        let opcode = mem[self.pc];
 
-        match byte {
-            0xA9 => {
-                self.cycles_left += 2;
+        let (cmd, addr_mode, op_length, cycles) = (match opcode {
+            0xA9 => Some((Cmd::LDA, AddrMode::Imm, 2, 2)),
+            0xA5 => Some((Cmd::LDA, AddrMode::Zpg, 2, 3)),
+            0xB5 => Some((Cmd::LDA, AddrMode::ZpgX, 2, 4)),
+            0xAD => Some((Cmd::LDA, AddrMode::Abs, 3, 4)),
+            0xBD => Some((Cmd::LDA, AddrMode::AbsX, 3, 4)),
+            0xB9 => Some((Cmd::LDA, AddrMode::AbsY, 3, 4)),
+            0xA1 => Some((Cmd::LDA, AddrMode::XInd, 2, 6)),
+            0xB1 => Some((Cmd::LDA, AddrMode::IndY, 2, 5)),
+            _ => None
+        }).unwrap();
 
-                self.a = mem[self.pc];
-                self.pc += 1;
+        let (operand, page_crossed) = match addr_mode {
+            AddrMode::Imm => {
+                let operand = mem[self.pc + 1];
+                (In::Imm(operand), false)
+            }
+            AddrMode::Zpg => {
+                let zpg_addr = mem[self.pc + 1];
+                let eff_addr = u16::from_le_bytes([zpg_addr, 0x00]);
+                (In::Addr(eff_addr), false)
+            }
+            AddrMode::ZpgX => {
+                let zpg_addr = mem[self.pc + 1];
+                let addr = u16::from_le_bytes([zpg_addr, 0x00]);
+                let eff_addr = addr + self.x as u16;
+                (In::Addr(eff_addr), false)
+            }
+            AddrMode::Abs => {
+                let lo_addr = mem[self.pc + 1];
+                let hi_addr = mem[self.pc + 2];
+                let eff_addr = u16::from_le_bytes([lo_addr, hi_addr]);
+                (In::Addr(eff_addr), false)
+            }
+            AddrMode::AbsX => {
+                let lo_addr = mem[self.pc + 1];
+                let hi_addr = mem[self.pc + 2];
+                let addr = u16::from_le_bytes([lo_addr, hi_addr]);
+                let eff_addr = addr + self.x as u16;
+                (In::Addr(eff_addr), false)
+            }
+            AddrMode::AbsY => {
+                let lo_addr = mem[self.pc + 1];
+                let hi_addr = mem[self.pc + 2];
+                let addr = u16::from_le_bytes([lo_addr, hi_addr]);
+                let eff_addr = addr + self.y as u16;
+                (In::Addr(eff_addr), false)
+            }
+            AddrMode::IndY => {
+                let zpg_addr = mem[self.pc + 1];
+                let ptr_addr = u16::from_le_bytes([zpg_addr, 0x00]);
 
+                let ptr_lo = mem[ptr_addr];
+                let ptr_hi = mem[ptr_addr + 1];
+                let ptr = u16::from_le_bytes([ptr_lo, ptr_hi]);
+
+                let eff_addr = ptr + self.y as u16;
+                (In::Addr(eff_addr), false)
+            }
+            AddrMode::XInd => {
+                let zpg_addr = mem[self.pc + 1] as u16 + self.x as u16;
+
+                let ptr_lo = mem[zpg_addr];
+                let ptr_hi = mem[zpg_addr + 1];
+                let ptr = u16::from_le_bytes([ptr_lo, ptr_hi]);
+
+                let eff_addr = ptr;
+                (In::Addr(eff_addr), false)
+            }
+            _ => unimplemented!()
+        };
+
+        self.cycles_left += if page_crossed { cycles + 1 } else { cycles };
+        self.pc = self.pc.wrapping_add(op_length as u16);
+
+        match (cmd, operand) {
+            (Cmd::LDA, In::Imm(byte)) => {
+                self.a = byte;
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
                 }
@@ -65,139 +219,9 @@ impl Cpu {
                 if self.a & 0b10000000 > 0 {
                     self.flags |= Flag::N as u8;
                 }
-
-                return;
             }
-            0xA5 => {
-                self.cycles_left += 3;
-
-                let low = mem[self.pc];
-                self.pc += 1;
-
-                let addr = u16::from_le_bytes([low, 0x00]);
+            (Cmd::LDA, In::Addr(addr)) => {
                 self.a = mem[addr];
-
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
-                }
-
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
-                }
-
-                return;
-            }
-            0xB5 => {
-                self.cycles_left += 4;
-
-                let low = mem[self.pc];
-                self.pc += 1;
-
-                self.a = mem[u16::from_le_bytes([low + self.x, 0x00])];
-
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
-                }
-
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
-                }
-
-
-                return;
-            }
-            0xBD => {
-                self.cycles_left += 4;
-
-                let low = mem[self.pc];
-                self.pc += 1;
-                let (addr, page_crossed) = low.overflowing_add(self.x);
-
-                let hi = mem[self.pc];
-                self.pc += 1;
-
-                let page = if page_crossed {
-                    self.cycles_left += 1;
-                    hi + 1
-                } else {
-                    hi
-                };
-
-                self.a = mem[u16::from_le_bytes([addr, page])];
-
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
-                }
-
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
-                }
-
-                return;
-            }
-            0xB9 => {
-                self.cycles_left += 4;
-
-                let low = mem[self.pc];
-                self.pc += 1;
-                let (addr, page_crossed) = low.overflowing_add(self.y);
-
-                let hi = mem[self.pc];
-                self.pc += 1;
-
-                let page = if page_crossed {
-                    self.cycles_left += 1;
-                    hi + 1
-                } else {
-                    hi
-                };
-
-                self.a = mem[u16::from_le_bytes([addr, page])];
-
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
-                }
-
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
-                }
-
-                return;
-            }
-            0xAD => {
-                self.cycles_left += 4;
-
-                let low = mem[self.pc];
-                self.pc += 1;
-
-                let hi = mem[self.pc];
-                self.pc += 1;
-
-                self.a = mem[u16::from_le_bytes([low, hi])];
-
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
-                }
-
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
-                }
-
-
-                return;
-            }
-            0xA1 => {
-                self.cycles_left += 6;
-
-                let operand = mem[self.pc];
-                self.pc += 1;
-
-                let zpg_addr = u16::from_le_bytes([operand, 0x00]);
-                let ind_addr = zpg_addr + self.x as u16;
-                let eff_addr = u16::from_le_bytes([mem[ind_addr], mem[ind_addr + 1]]);
-
-                self.a = mem[eff_addr];
-
                 if self.a == 0x00 {
                     self.flags |= Flag::Z as u8;
                 }
@@ -206,39 +230,7 @@ impl Cpu {
                     self.flags |= Flag::N as u8;
                 }
             }
-            0xB1 => {
-                self.cycles_left += 6;
-
-                let operand = mem[self.pc];
-                self.pc += 1;
-
-                let zpg_addr = u16::from_le_bytes([operand, 0x00]);
-                let eff_addr = u16::from_le_bytes([mem[zpg_addr], mem[zpg_addr + 1]]) + self.y as u16;
-
-                self.a = mem[eff_addr];
-
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
-                }
-
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
-                }
-            }
-            0x8D => {
-                self.cycles_left += 4;
-
-                let low = mem[self.pc];
-                self.pc += 1;
-
-                let hi = mem[self.pc];
-                self.pc += 1;
-
-                mem[u16::from_le_bytes([low, hi])] = self.a;
-
-                return;
-            }
-            _ => unimplemented!("Opcode 0x{:02X?} is not implemented", byte),
+            _ => unimplemented!()
         }
     }
 }
