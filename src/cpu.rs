@@ -337,159 +337,307 @@ mod test {
         }
     }
 
-    #[test]
-    fn lda_imm() {
-        run(&[0xA9, 0x01]).advance(2).assert_reg(A, 0x01);
-    }
 
-    #[test]
-    fn lda_imm_zero_flag() {
-        run(&[0xA9, NEG_NUMBER]).advance(2).assert_flag(N, true);
-        run(&[0xA9, POS_NUMBER]).advance(2).assert_flag(N, false);
-    }
+    mod lda {
+        use super::*;
 
-    #[test]
-    fn lda_imm_negative_flag() {
-        run(&[0xA9, ZERO]).advance(2).assert_flag(Z, true);
-        run(&[0xA9, NON_ZERO]).advance(2).assert_flag(Z, false);
-    }
+        mod imm {
+            use super::*;
 
-    #[test]
-    fn lda_abs() {
-        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(4).assert_reg(A, 0xFF);
-    }
+            #[test]
+            fn should_set_register_to_imm_value() {
+                run(&[0xA9, 0x01])
+                    .advance(2).assert_reg(A, 0x01);
+            }
 
-    #[test]
-    fn lda_abs_negative_flag() {
-        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
-        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER]).advance(4).assert_flag(N, false);
-    }
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xA9, NEG_NUMBER]).with_flag(N, false)
+                    .advance(2).assert_flag(N, true);
+            }
 
-    #[test]
-    fn lda_abs_zero_flag() {
-        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO]).advance(4).assert_flag(Z, true);
-        run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO]).advance(4).assert_flag(Z, false);
-    }
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xA9, POS_NUMBER]).with_flag(N, true)
+                    .advance(2).assert_flag(N, false);
+            }
 
-    #[test]
-    fn lda_abs_x() {
-        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[0xFF]).advance(4).assert_reg(A, 0xFF);
-    }
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xA9, ZERO]).with_flag(Z, false)
+                    .advance(2).assert_flag(Z, true);
+            }
 
-    #[test]
-    fn lda_abs_x_negative_flag() {
-        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
-        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[POS_NUMBER]).advance(4).assert_flag(N, false);
-    }
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xA9, NON_ZERO]).with_flag(Z, true)
+                    .advance(2).assert_flag(Z, false);
+            }
+        }
 
-    #[test]
-    fn lda_abs_x_zero_flag() {
-        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[ZERO]).advance(4).assert_flag(Z, true);
-        run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[NON_ZERO]).advance(4).assert_flag(Z, false);
-    }
+        mod abs {
+            use super::*;
 
-    #[test]
-    fn lda_abs_x_page_cross() {
-        run(&[0xBD, 0xFF, 0x21]).with_reg(X, 0x01).with_mem(0x21FF + 0x01, &[0xAD]).advance(5).assert_reg(A, 0xAD);
-    }
+            #[test]
+            fn should_load_value_from_addr() {
+                run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
+                    .advance(4).assert_reg(A, 0xFF);
+            }
 
-    #[test]
-    fn lda_abs_y() {
-        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x0012, &[0xFF]).advance(4).assert_reg(A, 0xFF);
-    }
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(N, false).with_mem(0xCAFE, &[NEG_NUMBER])
+                    .advance(4).assert_flag(N, true);
+            }
 
-    #[test]
-    fn lda_abs_y_negative_flag() {
-        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
-        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[POS_NUMBER]).advance(4).assert_flag(N, false);
-    }
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(N, true).with_mem(0xCAFE, &[POS_NUMBER])
+                    .advance(4).assert_flag(N, false);
+            }
 
-    #[test]
-    fn lda_abs_y_zero_flag() {
-        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[ZERO]).advance(4).assert_flag(Z, true);
-        run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[NON_ZERO]).advance(4).assert_flag(Z, false);
-    }
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(Z, false).with_mem(0xCAFE, &[ZERO])
+                    .advance(4).assert_flag(Z, true);
+            }
 
-    #[test]
-    fn lda_abs_y_page_cross() {
-        run(&[0xB9, 0xFF, 0x21]).with_reg(Y, 0x01).with_mem(0x21FF + 0x01, &[0xAD]).advance(5).assert_reg(A, 0xAD);
-    }
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(Z, true).with_mem(0xCAFE, &[NON_ZERO])
+                    .advance(4).assert_flag(Z, false);
+            }
+        }
 
-    #[test]
-    fn lda_zpg() {
-        run(&[0xA5, 0xED]).with_mem(0x00ED, &[0xFF]).advance(3).assert_reg(A, 0xFF);
-    }
+        mod abs_x {
+            use super::*;
 
-    #[test]
-    fn lda_zpg_negative_flag() {
-        run(&[0xA5, 0xED]).with_mem(0x00ED, &[NEG_NUMBER]).advance(3).assert_flag(N, true);
-        run(&[0xA5, 0xED]).with_mem(0x00ED, &[POS_NUMBER]).advance(3).assert_flag(N, false);
-    }
+            #[test]
+            fn should_load_a_from_addr_indexed_by_x() {
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[0xFF])
+                    .advance(4).assert_reg(A, 0xFF);
+            }
 
-    #[test]
-    fn lda_zpg_zero_flag() {
-        run(&[0xA5, 0xED]).with_mem(0x00ED, &[ZERO]).advance(3).assert_flag(Z, true);
-        run(&[0xA5, 0xED]).with_mem(0x00ED, &[NON_ZERO]).advance(3).assert_flag(Z, false);
-    }
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(N, false).with_mem(0x1020 + 0x12, &[NEG_NUMBER])
+                    .advance(4).assert_flag(N, true);
+            }
 
-    #[test]
-    fn lda_zpg_x() {
-        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[0xFF]).advance(4).assert_reg(A, 0xFF);
-    }
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(N, true).with_mem(0x1020 + 0x12, &[POS_NUMBER])
+                    .advance(4).assert_flag(N, false);
+            }
 
-    #[test]
-    fn lda_zpg_x_negative_flag() {
-        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[NEG_NUMBER]).advance(4).assert_flag(N, true);
-        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[POS_NUMBER]).advance(4).assert_flag(N, false);
-    }
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(Z, false).with_mem(0x1020 + 0x12, &[ZERO])
+                    .advance(4).assert_flag(Z, true);
+            }
 
-    #[test]
-    fn lda_zpg_x_zero_flag() {
-        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[ZERO]).advance(4).assert_flag(Z, true);
-        run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[NON_ZERO]).advance(4).assert_flag(Z, false);
-    }
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(Z, true).with_mem(0x1020 + 0x12, &[NON_ZERO])
+                    .advance(4).assert_flag(Z, false);
+            }
 
-    #[test]
-    fn lda_x_ind() {
-        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
-    }
+            #[ignore]
+            #[test]
+            fn should_add_cycle_on_page_cross() {
+                run(&[0xBD, 0xFF, 0x21]).with_reg(X, 0x01).with_mem(0x21FF + 0x01, &[0xAD])
+                    .advance(5).assert_reg(A, 0xAD);
+            }
+        }
 
-    #[test]
-    fn lda_x_ind_add_with_overflow() {
-        run(&[0xA1, 0xFF]).with_reg(X, 0xFF).with_mem(0x00FF + 0xFF, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF]).advance(6).assert_reg(A, 0xFF);
-    }
+        mod abs_y {
+            use super::*;
 
-    #[test]
-    fn lda_x_ind_negative_flag() {
-        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER]).advance(6).assert_flag(N, false);
-        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER]).advance(6).assert_flag(N, true);
-    }
+            #[test]
+            fn should_load_a_from_addr_indexed_by_y() {
+                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x0012, &[0xFF])
+                    .advance(4).assert_reg(A, 0xFF);
+            }
 
-    #[test]
-    fn lda_x_ind_zero_flag() {
-        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO]).advance(6).assert_flag(Z, true);
-        run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO]).advance(6).assert_flag(Z, false);
-    }
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_flag(N, false).with_mem(0x1020 + 0x12, &[NEG_NUMBER])
+                    .advance(4).assert_flag(N, true);
+            }
 
-    #[test]
-    fn lda_ind_y() {
-        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[0xFF]).advance(5).assert_reg(A, 0xFF);
-    }
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_flag(N, true).with_mem(0x1020 + 0x12, &[POS_NUMBER])
+                    .advance(4).assert_flag(N, false);
+            }
 
-    #[test]
-    fn lda_ind_y_add_with_overflow() {
-        run(&[0xB1, 0xFF]).with_reg(Y, 0xFF).with_mem(0x00FF, &[0xFE, 0xCA]).with_mem(0xCAFE + 0xFF, &[0xFF]).advance(6).assert_reg(A, 0xFF);
-    }
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xB9, 0x20, 0x10]).with_flag(Z, false).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[ZERO])
+                    .advance(4).assert_flag(Z, true);
+            }
 
-    #[test]
-    fn lda_ind_y_negative_flag() {
-        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[POS_NUMBER]).advance(6).assert_flag(N, false);
-        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NEG_NUMBER]).advance(6).assert_flag(N, true);
-    }
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xB9, 0x20, 0x10]).with_flag(Z, true).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[NON_ZERO])
+                    .advance(4).assert_flag(Z, false);
+            }
 
-    #[test]
-    fn lda_ind_y_zero_flag() {
-        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[ZERO]).advance(6).assert_flag(Z, true);
-        run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NON_ZERO]).advance(6).assert_flag(Z, false);
+            #[test]
+            fn should_add_cycle_on_page_cross() {
+                run(&[0xB9, 0xFF, 0x21]).with_reg(Y, 0x01).with_mem(0x21FF + 0x01, &[0xAD])
+                    .advance(5).assert_reg(A, 0xAD);
+            }
+        }
+
+        mod zpg {
+            use super::*;
+
+            #[test]
+            fn should_load_a_from_zpg_addr() {
+                run(&[0xA5, 0xED]).with_mem(0x00ED, &[0xFF])
+                    .advance(3).assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xA5, 0xED]).with_flag(N, false).with_mem(0x00ED, &[NEG_NUMBER])
+                    .advance(3).assert_flag(N, true);
+            }
+
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xA5, 0xED]).with_flag(N, true).with_mem(0x00ED, &[POS_NUMBER])
+                    .advance(3).assert_flag(N, false);
+            }
+
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xA5, 0xED]).with_flag(Z, false).with_mem(0x00ED, &[ZERO])
+                    .advance(3).assert_flag(Z, true);
+            }
+
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xA5, 0xED]).with_flag(Z, true).with_mem(0x00ED, &[NON_ZERO])
+                    .advance(3).assert_flag(Z, false);
+            }
+        }
+
+        mod zpg_x {
+            use super::*;
+
+            #[test]
+            fn should_load_a_from_addr_indexed_by_x() {
+                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[0xFF])
+                    .advance(4).assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xB5, 0xED]).with_flag(N, false).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[NEG_NUMBER])
+                    .advance(4).assert_flag(N, true);
+            }
+
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xB5, 0xED]).with_flag(N, true).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[POS_NUMBER])
+                    .advance(4).assert_flag(N, false);
+            }
+
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_flag(Z, false).with_mem(0x00ED + 0x11, &[ZERO])
+                    .advance(4).assert_flag(Z, true);
+            }
+
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_flag(Z, true).with_mem(0x00ED + 0x11, &[NON_ZERO])
+                    .advance(4).assert_flag(Z, false);
+            }
+        }
+
+        mod x_ind {
+            use super::*;
+
+            #[test]
+            fn should_load_a_from_addr_pointed_by_indirect_pre_indexed_by_x() {
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
+                    .advance(6).assert_reg(A, 0xFF);
+            }
+
+            #[ignore]
+            #[test]
+            fn should_not_overflow() {
+                run(&[0xA1, 0xFF]).with_reg(X, 0xFF).with_mem(0x00FF + 0xFF, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
+                    .advance(6).assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(N, true).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER])
+                    .advance(6).assert_flag(N, false);
+            }
+
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(N, false).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER])
+                    .advance(6).assert_flag(N, true);
+            }
+
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(Z, false).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO])
+                    .advance(6).assert_flag(Z, true);
+            }
+
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(Z, true).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO])
+                    .advance(6).assert_flag(Z, false);
+            }
+        }
+
+        mod ind_y {
+            use super::*;
+
+            #[test]
+            fn should_load_a_from_addr_pointed_by_indirect_post_indexed_by_y() {
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[0xFF])
+                    .advance(5).assert_reg(A, 0xFF);
+            }
+
+            #[ignore]
+            #[test]
+            fn should_overflow() {
+                run(&[0xB1, 0xFF]).with_reg(Y, 0xFF).with_mem(0x00FF, &[0xFE, 0xCA]).with_mem(0xCAFE + 0xFF, &[0xFF])
+                    .advance(6).assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_set_negative_flag() {
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(N, true).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[POS_NUMBER])
+                    .advance(6).assert_flag(N, false);
+            }
+
+            #[test]
+            fn should_clear_negative_flag() {
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(N, false).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NEG_NUMBER])
+                    .advance(6).assert_flag(N, true);
+            }
+
+            #[test]
+            fn should_set_zero_flag() {
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(Z, false).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[ZERO])
+                    .advance(6).assert_flag(Z, true);
+            }
+
+            #[test]
+            fn should_clear_zero_flag() {
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(Z, true).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NON_ZERO])
+                    .advance(6).assert_flag(Z, false);
+            }
+        }
     }
 }
