@@ -1,6 +1,10 @@
 use std::cell::RefCell;
-use std::ops::IndexMut;
+use std::ops::{IndexMut};
 use std::rc::Rc;
+
+type Flags = u8;
+type Addr = u16;
+type Memory = dyn IndexMut<Addr, Output=u8>;
 
 #[derive(Debug, Copy, Clone)]
 enum Flag {
@@ -12,13 +16,7 @@ enum Flag {
     C = 0b00000001,
 }
 
-type Flags = u8;
-type Addr = u16;
-type OpLength = u8;
-type OpCycles = usize;
-type IsPageCrossed = bool;
-type Memory = dyn IndexMut<Addr, Output=u8>;
-
+#[derive(Debug, Copy, Clone)]
 pub enum Cmd {
     ADC,
     AND,
@@ -78,13 +76,7 @@ pub enum Cmd {
     TYA,
 }
 
-enum In {
-    Imp,
-    Imm(u8),
-    Rel(i8),
-    Addr(u16),
-}
-
+#[derive(Debug, Copy, Clone)]
 enum AddrMode {
     Acc,
     Imp,
@@ -109,6 +101,12 @@ struct Cpu {
     pc: Addr,
     flags: Flags,
     cycles_left: usize,
+    ir: u8,
+    addr_hi: u8,
+    addr_lo: u8,
+    data: u8,
+    timer_state: u8,
+    total_cycles: usize,
 }
 
 impl Cpu {
@@ -121,20 +119,19 @@ impl Cpu {
             pc: 0x0000,
             flags: 0b00000000,
             cycles_left: 0,
+            ir: 0x00,
+            addr_hi: 0x00,
+            addr_lo: 0x00,
+            data: 0x00,
+            timer_state: 0,
+            total_cycles: 0,
         }
     }
 
     pub fn tick(&mut self) {
-        if self.cycles_left > 0 {
-            self.cycles_left -= 1;
-            return;
-        }
+        self.total_cycles += 1;
 
-        let mem = self.mem.borrow_mut();
-
-        let opcode = mem[self.pc];
-
-        let (cmd, addr_mode, op_length, cycles) = (match opcode {
+        let (op, addr_mode, _, _) = (match &self.ir {
             0xA9 => Some((Cmd::LDA, AddrMode::Imm, 2, 2)),
             0xA5 => Some((Cmd::LDA, AddrMode::Zpg, 2, 3)),
             0xB5 => Some((Cmd::LDA, AddrMode::ZpgX, 2, 4)),
@@ -143,95 +140,305 @@ impl Cpu {
             0xB9 => Some((Cmd::LDA, AddrMode::AbsY, 3, 4)),
             0xA1 => Some((Cmd::LDA, AddrMode::XInd, 2, 6)),
             0xB1 => Some((Cmd::LDA, AddrMode::IndY, 2, 5)),
+            0x00 => Some((Cmd::BRK, AddrMode::Imp, 0, 0)),
             _ => None
         }).unwrap();
 
-        let (operand, page_crossed) = match addr_mode {
-            AddrMode::Imm => {
-                let operand = mem[self.pc + 1];
-                (In::Imm(operand), false)
-            }
-            AddrMode::Zpg => {
-                let zpg_addr = mem[self.pc + 1];
-                let eff_addr = u16::from_le_bytes([zpg_addr, 0x00]);
-                (In::Addr(eff_addr), false)
-            }
-            AddrMode::ZpgX => {
-                let zpg_addr = mem[self.pc + 1];
-                let addr = u16::from_le_bytes([zpg_addr, 0x00]);
-                let eff_addr = addr + self.x as u16;
-                (In::Addr(eff_addr), false)
-            }
-            AddrMode::Abs => {
-                let lo_addr = mem[self.pc + 1];
-                let hi_addr = mem[self.pc + 2];
-                let eff_addr = u16::from_le_bytes([lo_addr, hi_addr]);
-                (In::Addr(eff_addr), false)
-            }
-            AddrMode::AbsX => {
-                let lo_addr = mem[self.pc + 1];
-                let hi_addr = mem[self.pc + 2];
-                let addr = u16::from_le_bytes([lo_addr, hi_addr]);
-                let eff_addr = addr + self.x as u16;
-                (In::Addr(eff_addr), false)
-            }
-            AddrMode::AbsY => {
-                let lo_addr = mem[self.pc + 1];
-                let hi_addr = mem[self.pc + 2];
-                let addr = u16::from_le_bytes([lo_addr, hi_addr]);
-                let eff_addr = addr + self.y as u16;
-                (In::Addr(eff_addr), false)
-            }
-            AddrMode::IndY => {
-                let zpg_addr = mem[self.pc + 1];
-                let ptr_addr = u16::from_le_bytes([zpg_addr, 0x00]);
+        match (op, addr_mode) {
+            (Cmd::LDA, AddrMode::Imm) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.a = self.data;
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
 
-                let ptr_lo = mem[ptr_addr];
-                let ptr_hi = mem[ptr_addr + 1];
-                let ptr = u16::from_le_bytes([ptr_lo, ptr_hi]);
-
-                let eff_addr = ptr + self.y as u16;
-                (In::Addr(eff_addr), false)
-            }
-            AddrMode::XInd => {
-                let zpg_addr = mem[self.pc + 1] as u16 + self.x as u16;
-
-                let ptr_lo = mem[zpg_addr];
-                let ptr_hi = mem[zpg_addr + 1];
-                let ptr = u16::from_le_bytes([ptr_lo, ptr_hi]);
-
-                let eff_addr = ptr;
-                (In::Addr(eff_addr), false)
-            }
-            _ => unimplemented!()
-        };
-
-        self.cycles_left += if page_crossed { cycles + 1 } else { cycles };
-        self.pc = self.pc.wrapping_add(op_length as u16);
-
-        match (cmd, operand) {
-            (Cmd::LDA, In::Imm(byte)) => {
-                self.a = byte;
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
-                }
-
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
                 }
             }
-            (Cmd::LDA, In::Addr(addr)) => {
-                self.a = mem[addr];
-                if self.a == 0x00 {
-                    self.flags |= Flag::Z as u8;
+            (Cmd::BRK, _) => {
+                match &self.timer_state {
+                    0 => {
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
                 }
+            }
+            (Cmd::LDA, AddrMode::Zpg) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 2;
+                    }
+                    2 => {
+                        self.data = self.mem_read(u16::from_le_bytes([self.data, 0x00]));
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.a = self.data;
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
 
-                if self.a & 0b10000000 > 0 {
-                    self.flags |= Flag::N as u8;
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
+                }
+            }
+            (Cmd::LDA, AddrMode::ZpgX) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 2;
+                    }
+                    2 => {
+                        self.addr_lo = self.data.wrapping_add(self.x);
+                        self.timer_state = 3;
+                    }
+                    3 => {
+                        self.addr_hi = 0x00;
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.a = self.data;
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
+
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
+                }
+            }
+            (Cmd::LDA, AddrMode::Abs) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 2;
+                    }
+                    2 => {
+                        self.addr_hi = self.fetch();
+                        self.timer_state = 3;
+                    }
+                    3 => {
+                        self.addr_lo = self.data;
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.a = self.data;
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
+
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
+                }
+            }
+            (Cmd::LDA, AddrMode::AbsX) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 2;
+                    }
+                    2 => {
+                        let (new_addr, page_crossed) = self.data.overflowing_add(self.x);
+                        self.addr_lo = new_addr;
+                        self.addr_hi = self.fetch();
+
+                        if page_crossed {
+                            self.timer_state = 3;
+                        } else {
+                            self.timer_state = 4;
+                        }
+                    }
+                    3 => {
+                        self.addr_hi = self.addr_hi.wrapping_add(1);
+                        self.timer_state = 4;
+                    }
+                    4 => {
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.a = self.data;
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
+
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
+                }
+            }
+            (Cmd::LDA, AddrMode::AbsY) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 2;
+                    }
+                    2 => {
+                        let (new_addr, page_crossed) = self.data.overflowing_add(self.y);
+                        self.addr_lo = new_addr;
+                        self.addr_hi = self.fetch();
+
+                        if page_crossed {
+                            self.timer_state = 3;
+                        } else {
+                            self.timer_state = 4;
+                        }
+                    }
+                    3 => {
+                        self.addr_hi = self.addr_hi.wrapping_add(1);
+                        self.timer_state = 4;
+                    }
+                    4 => {
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.a = self.data;
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
+
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
+                }
+            }
+            (Cmd::LDA, AddrMode::XInd) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 2;
+                    }
+                    2 => {
+                        self.addr_lo = self.data.wrapping_add(self.x);
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, 0x00]));
+                        self.timer_state = 3;
+                    }
+                    3 => {
+                        self.addr_lo = self.addr_lo.wrapping_add(1);
+                        self.timer_state = 4;
+                    }
+                    4 => {
+                        self.addr_hi = self.mem_read(u16::from_le_bytes([self.addr_lo, 0x00]));
+                        self.timer_state = 5;
+                    }
+                    5 => {
+                        self.addr_lo = self.data;
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.a = self.data;
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
+
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
+                }
+            }
+            (Cmd::LDA, AddrMode::IndY) => {
+                match &self.timer_state {
+                    1 => {
+                        self.data = self.fetch();
+                        self.timer_state = 2;
+                    }
+                    2 => {
+                        self.addr_lo = self.data;
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, 0x00]));
+                        self.timer_state = 3;
+                    }
+                    3 => {
+                        self.addr_lo = self.addr_lo.wrapping_add(1);
+                        self.addr_hi = self.mem_read(u16::from_le_bytes([self.addr_lo, 0x00]));
+                        let (addr, page_crossed) = self.data.overflowing_add(self.y);
+                        self.addr_lo = addr;
+
+                        if page_crossed {
+                            self.timer_state = 4;
+                        } else {
+                            self.timer_state = 5;
+                        }
+                    }
+                    4 => {
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi.wrapping_add(1)]));
+                        self.a = self.data;
+
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
+                        self.timer_state = 5;
+                    }
+                    5 => {
+                        self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                        self.a = self.data;
+
+                        self.set_zero_flag(self.a);
+                        self.set_negative_flag(self.a);
+
+                        self.timer_state = 0;
+                    }
+                    0 => {
+                        self.ir = self.fetch();
+                        self.timer_state = 1;
+                    }
+                    _ => unreachable!()
                 }
             }
             _ => unimplemented!()
         }
+    }
+
+    fn fetch(&mut self) -> u8 {
+        let byte = self.mem_read(self.pc);
+        self.pc += 1;
+        byte
+    }
+
+    pub fn step(&mut self) {
+        self.tick();
+        self.tick();
+        while self.timer_state != 1 {
+            self.tick()
+        }
+    }
+
+    fn set_addr_from_u16(&mut self, i: u16) {
+        self.addr_lo = i.to_le_bytes()[0];
+        self.addr_hi = i.to_le_bytes()[1];
+    }
+
+    fn set_negative_flag(&mut self, i: u8) {
+        if i & 0b10000000 > 0 {
+            self.flags |= Flag::N as u8;
+        } else {
+            self.flags ^= Flag::N as u8;
+        }
+    }
+
+    fn set_zero_flag(&mut self, i: u8) {
+        if i == 0x00 {
+            self.flags |= Flag::Z as u8;
+        } else {
+            self.flags ^= Flag::Z as u8;
+        }
+    }
+
+    fn mem_read(&self, addr: Addr) -> u8 {
+        self.mem.borrow()[addr]
     }
 }
 
@@ -329,10 +536,14 @@ mod test {
             self
         }
 
-        fn advance(&mut self, t: usize) -> &TestCase {
-            for _ in 0..t {
-                self.cpu.tick();
-            }
+        fn assert_cycles(&self, want: usize) -> &TestCase {
+            let got = self.cpu.total_cycles - 1; // Do not count initial cycle
+            assert_eq!(got, want, "{} total cycles to be {}, but was {}", self.message, want, got);
+            self
+        }
+
+        fn step(&mut self) -> &TestCase {
+            self.cpu.step();
             self
         }
     }
@@ -347,31 +558,43 @@ mod test {
             #[test]
             fn should_set_register_to_imm_value() {
                 run(&[0xA9, 0x01])
-                    .advance(2).assert_reg(A, 0x01);
+                    .step()
+                    .assert_reg(A, 0x01);
+            }
+
+            #[test]
+            fn should_take_2_cycles() {
+                run(&[0xA9, 0x01])
+                    .step()
+                    .assert_cycles(2);
             }
 
             #[test]
             fn should_set_negative_flag() {
                 run(&[0xA9, NEG_NUMBER]).with_flag(N, false)
-                    .advance(2).assert_flag(N, true);
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_clear_negative_flag() {
                 run(&[0xA9, POS_NUMBER]).with_flag(N, true)
-                    .advance(2).assert_flag(N, false);
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_set_zero_flag() {
                 run(&[0xA9, ZERO]).with_flag(Z, false)
-                    .advance(2).assert_flag(Z, true);
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
                 run(&[0xA9, NON_ZERO]).with_flag(Z, true)
-                    .advance(2).assert_flag(Z, false);
+                    .step()
+                    .assert_flag(Z, false);
             }
         }
 
@@ -380,32 +603,50 @@ mod test {
 
             #[test]
             fn should_load_value_from_addr() {
-                run(&[0xAD, 0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
-                    .advance(4).assert_reg(A, 0xFF);
+                run(&[0xAD, 0xFE, 0xCA])
+                    .with_mem(0xCAFE, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_take_4_cycles() {
+                run(&[0xAD, 0xFE, 0xCA])
+                    .with_mem(0xCAFE, &[0xFF])
+                    .step()
+                    .assert_cycles(4);
             }
 
             #[test]
             fn should_set_negative_flag() {
-                run(&[0xAD, 0xFE, 0xCA]).with_flag(N, false).with_mem(0xCAFE, &[NEG_NUMBER])
-                    .advance(4).assert_flag(N, true);
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(N, false)
+                    .with_mem(0xCAFE, &[NEG_NUMBER])
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_clear_negative_flag() {
-                run(&[0xAD, 0xFE, 0xCA]).with_flag(N, true).with_mem(0xCAFE, &[POS_NUMBER])
-                    .advance(4).assert_flag(N, false);
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(N, true)
+                    .with_mem(0xCAFE, &[POS_NUMBER])
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_set_zero_flag() {
-                run(&[0xAD, 0xFE, 0xCA]).with_flag(Z, false).with_mem(0xCAFE, &[ZERO])
-                    .advance(4).assert_flag(Z, true);
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(Z, false)
+                    .with_mem(0xCAFE, &[ZERO])
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
-                run(&[0xAD, 0xFE, 0xCA]).with_flag(Z, true).with_mem(0xCAFE, &[NON_ZERO])
-                    .advance(4).assert_flag(Z, false);
+                run(&[0xAD, 0xFE, 0xCA]).with_flag(Z, true)
+                    .with_mem(0xCAFE, &[NON_ZERO])
+                    .step()
+                    .assert_flag(Z, false);
             }
         }
 
@@ -414,39 +655,58 @@ mod test {
 
             #[test]
             fn should_load_a_from_addr_indexed_by_x() {
-                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_mem(0x1020 + 0x12, &[0xFF])
-                    .advance(4).assert_reg(A, 0xFF);
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12)
+                    .with_mem(0x1020 + 0x12, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_take_4_cycles() {
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12)
+                    .with_mem(0x1020 + 0x12, &[0xFF])
+                    .step()
+                    .assert_cycles(4);
             }
 
             #[test]
             fn should_set_negative_flag() {
-                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(N, false).with_mem(0x1020 + 0x12, &[NEG_NUMBER])
-                    .advance(4).assert_flag(N, true);
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(N, false)
+                    .with_mem(0x1020 + 0x12, &[NEG_NUMBER])
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_clear_negative_flag() {
-                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(N, true).with_mem(0x1020 + 0x12, &[POS_NUMBER])
-                    .advance(4).assert_flag(N, false);
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(N, true)
+                    .with_mem(0x1020 + 0x12, &[POS_NUMBER])
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_set_zero_flag() {
-                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(Z, false).with_mem(0x1020 + 0x12, &[ZERO])
-                    .advance(4).assert_flag(Z, true);
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(Z, false)
+                    .with_mem(0x1020 + 0x12, &[ZERO])
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
-                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(Z, true).with_mem(0x1020 + 0x12, &[NON_ZERO])
-                    .advance(4).assert_flag(Z, false);
+                run(&[0xBD, 0x20, 0x10]).with_reg(X, 0x12).with_flag(Z, true)
+                    .with_mem(0x1020 + 0x12, &[NON_ZERO])
+                    .step()
+                    .assert_flag(Z, false);
             }
 
-            #[ignore]
             #[test]
             fn should_add_cycle_on_page_cross() {
-                run(&[0xBD, 0xFF, 0x21]).with_reg(X, 0x01).with_mem(0x21FF + 0x01, &[0xAD])
-                    .advance(5).assert_reg(A, 0xAD);
+                run(&[0xBD, 0xFF, 0x21]).with_reg(X, 0x01)
+                    .with_mem(0x21FF + 0x01, &[0xAD])
+                    .step()
+                    .assert_reg(A, 0xAD);
             }
         }
 
@@ -455,38 +715,58 @@ mod test {
 
             #[test]
             fn should_load_a_from_addr_indexed_by_y() {
-                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_mem(0x1020 + 0x0012, &[0xFF])
-                    .advance(4).assert_reg(A, 0xFF);
+                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12)
+                    .with_mem(0x1020 + 0x0012, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_take_4_cycles() {
+                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12)
+                    .with_mem(0x1020 + 0x0012, &[0xFF])
+                    .step()
+                    .assert_cycles(4);
             }
 
             #[test]
             fn should_set_negative_flag() {
-                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_flag(N, false).with_mem(0x1020 + 0x12, &[NEG_NUMBER])
-                    .advance(4).assert_flag(N, true);
+                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_flag(N, false)
+                    .with_mem(0x1020 + 0x12, &[NEG_NUMBER])
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_clear_negative_flag() {
-                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_flag(N, true).with_mem(0x1020 + 0x12, &[POS_NUMBER])
-                    .advance(4).assert_flag(N, false);
+                run(&[0xB9, 0x20, 0x10]).with_reg(Y, 0x12).with_flag(N, true)
+                    .with_mem(0x1020 + 0x12, &[POS_NUMBER])
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_set_zero_flag() {
-                run(&[0xB9, 0x20, 0x10]).with_flag(Z, false).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[ZERO])
-                    .advance(4).assert_flag(Z, true);
+                run(&[0xB9, 0x20, 0x10]).with_flag(Z, false).with_reg(Y, 0x12)
+                    .with_mem(0x1020 + 0x12, &[ZERO])
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
-                run(&[0xB9, 0x20, 0x10]).with_flag(Z, true).with_reg(Y, 0x12).with_mem(0x1020 + 0x12, &[NON_ZERO])
-                    .advance(4).assert_flag(Z, false);
+                run(&[0xB9, 0x20, 0x10]).with_flag(Z, true).with_reg(Y, 0x12)
+                    .with_mem(0x1020 + 0x12, &[NON_ZERO])
+                    .step()
+                    .assert_flag(Z, false);
             }
 
             #[test]
             fn should_add_cycle_on_page_cross() {
-                run(&[0xB9, 0xFF, 0x21]).with_reg(Y, 0x01).with_mem(0x21FF + 0x01, &[0xAD])
-                    .advance(5).assert_reg(A, 0xAD);
+                run(&[0xB9, 0xFF, 0x21]).with_reg(Y, 0x01)
+                    .with_mem(0x21FF + 0x01, &[0xAD])
+                    .step()
+                    .assert_cycles(5);
             }
         }
 
@@ -496,31 +776,47 @@ mod test {
             #[test]
             fn should_load_a_from_zpg_addr() {
                 run(&[0xA5, 0xED]).with_mem(0x00ED, &[0xFF])
-                    .advance(3).assert_reg(A, 0xFF);
+                    .step()
+                    .assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_take_3_cycles() {
+                run(&[0xA5, 0xED]).with_mem(0x00ED, &[0xFF])
+                    .step()
+                    .assert_cycles(3);
             }
 
             #[test]
             fn should_set_negative_flag() {
-                run(&[0xA5, 0xED]).with_flag(N, false).with_mem(0x00ED, &[NEG_NUMBER])
-                    .advance(3).assert_flag(N, true);
+                run(&[0xA5, 0xED]).with_flag(N, false)
+                    .with_mem(0x00ED, &[NEG_NUMBER])
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_clear_negative_flag() {
-                run(&[0xA5, 0xED]).with_flag(N, true).with_mem(0x00ED, &[POS_NUMBER])
-                    .advance(3).assert_flag(N, false);
+                run(&[0xA5, 0xED]).with_flag(N, true)
+                    .with_mem(0x00ED, &[POS_NUMBER])
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_set_zero_flag() {
-                run(&[0xA5, 0xED]).with_flag(Z, false).with_mem(0x00ED, &[ZERO])
-                    .advance(3).assert_flag(Z, true);
+                run(&[0xA5, 0xED]).with_flag(Z, false)
+                    .with_mem(0x00ED, &[ZERO])
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
-                run(&[0xA5, 0xED]).with_flag(Z, true).with_mem(0x00ED, &[NON_ZERO])
-                    .advance(3).assert_flag(Z, false);
+                run(&[0xA5, 0xED]).with_flag(Z, true)
+                    .with_mem(0x00ED, &[NON_ZERO])
+                    .step()
+                    .assert_flag(Z, false);
             }
         }
 
@@ -529,32 +825,50 @@ mod test {
 
             #[test]
             fn should_load_a_from_addr_indexed_by_x() {
-                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[0xFF])
-                    .advance(4).assert_reg(A, 0xFF);
+                run(&[0xB5, 0xED]).with_reg(X, 0x11)
+                    .with_mem(0x00ED + 0x11, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_take_4_cycles() {
+                run(&[0xB5, 0xED]).with_reg(X, 0x11)
+                    .with_mem(0x00ED + 0x11, &[0xFF])
+                    .step()
+                    .assert_cycles(4);
             }
 
             #[test]
             fn should_set_negative_flag() {
-                run(&[0xB5, 0xED]).with_flag(N, false).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[NEG_NUMBER])
-                    .advance(4).assert_flag(N, true);
+                run(&[0xB5, 0xED]).with_flag(N, false).with_reg(X, 0x11)
+                    .with_mem(0x00ED + 0x11, &[NEG_NUMBER])
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_clear_negative_flag() {
-                run(&[0xB5, 0xED]).with_flag(N, true).with_reg(X, 0x11).with_mem(0x00ED + 0x11, &[POS_NUMBER])
-                    .advance(4).assert_flag(N, false);
+                run(&[0xB5, 0xED]).with_flag(N, true).with_reg(X, 0x11)
+                    .with_mem(0x00ED + 0x11, &[POS_NUMBER])
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_set_zero_flag() {
-                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_flag(Z, false).with_mem(0x00ED + 0x11, &[ZERO])
-                    .advance(4).assert_flag(Z, true);
+                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_flag(Z, false)
+                    .with_mem(0x00ED + 0x11, &[ZERO])
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
-                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_flag(Z, true).with_mem(0x00ED + 0x11, &[NON_ZERO])
-                    .advance(4).assert_flag(Z, false);
+                run(&[0xB5, 0xED]).with_reg(X, 0x11).with_flag(Z, true)
+                    .with_mem(0x00ED + 0x11, &[NON_ZERO])
+                    .step()
+                    .assert_flag(Z, false);
             }
         }
 
@@ -563,39 +877,59 @@ mod test {
 
             #[test]
             fn should_load_a_from_addr_pointed_by_indirect_pre_indexed_by_x() {
-                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
-                    .advance(6).assert_reg(A, 0xFF);
+                run(&[0xA1, 0xED]).with_reg(X, 0x01)
+                    .with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_take_6_cycles() {
+                run(&[0xA1, 0xED]).with_reg(X, 0x01)
+                    .with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
+                    .step()
+                    .assert_cycles(6);
             }
 
             #[ignore]
             #[test]
             fn should_not_overflow() {
-                run(&[0xA1, 0xFF]).with_reg(X, 0xFF).with_mem(0x00FF + 0xFF, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
-                    .advance(6).assert_reg(A, 0xFF);
+                run(&[0xA1, 0xFF]).with_reg(X, 0xFF)
+                    .with_mem(0x00FF + 0xFF, &[0xFE, 0xCA]).with_mem(0xCAFE, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
             }
 
             #[test]
             fn should_clear_negative_flag() {
-                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(N, true).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER])
-                    .advance(6).assert_flag(N, false);
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(N, true)
+                    .with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[POS_NUMBER])
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_set_negative_flag() {
-                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(N, false).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER])
-                    .advance(6).assert_flag(N, true);
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(N, false)
+                    .with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NEG_NUMBER])
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_set_zero_flag() {
-                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(Z, false).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO])
-                    .advance(6).assert_flag(Z, true);
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(Z, false)
+                    .with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[ZERO])
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
-                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(Z, true).with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO])
-                    .advance(6).assert_flag(Z, false);
+                run(&[0xA1, 0xED]).with_reg(X, 0x01).with_flag(Z, true)
+                    .with_mem(0x00ED + 0x01, &[0xFE, 0xCA]).with_mem(0xCAFE, &[NON_ZERO])
+                    .step()
+                    .assert_flag(Z, false);
             }
         }
 
@@ -604,39 +938,59 @@ mod test {
 
             #[test]
             fn should_load_a_from_addr_pointed_by_indirect_post_indexed_by_y() {
-                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[0xFF])
-                    .advance(5).assert_reg(A, 0xFF);
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01)
+                    .with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
+            }
+
+            #[test]
+            fn should_take_5_cycles() {
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01)
+                    .with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[0xFF])
+                    .step()
+                    .assert_cycles(5);
             }
 
             #[ignore]
             #[test]
             fn should_overflow() {
-                run(&[0xB1, 0xFF]).with_reg(Y, 0xFF).with_mem(0x00FF, &[0xFE, 0xCA]).with_mem(0xCAFE + 0xFF, &[0xFF])
-                    .advance(6).assert_reg(A, 0xFF);
+                run(&[0xB1, 0xFF]).with_reg(Y, 0xFF)
+                    .with_mem(0x00FF, &[0xFE, 0xCA]).with_mem(0xCAFE + 0xFF, &[0xFF])
+                    .step()
+                    .assert_reg(A, 0xFF);
             }
 
             #[test]
             fn should_set_negative_flag() {
-                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(N, true).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[POS_NUMBER])
-                    .advance(6).assert_flag(N, false);
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01)
+                    .with_flag(N, true).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[POS_NUMBER])
+                    .step()
+                    .assert_flag(N, false);
             }
 
             #[test]
             fn should_clear_negative_flag() {
-                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(N, false).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NEG_NUMBER])
-                    .advance(6).assert_flag(N, true);
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(N, false)
+                    .with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NEG_NUMBER])
+                    .step()
+                    .assert_flag(N, true);
             }
 
             #[test]
             fn should_set_zero_flag() {
-                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(Z, false).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[ZERO])
-                    .advance(6).assert_flag(Z, true);
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(Z, false)
+                    .with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[ZERO])
+                    .step()
+                    .assert_flag(Z, true);
             }
 
             #[test]
             fn should_clear_zero_flag() {
-                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(Z, true).with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NON_ZERO])
-                    .advance(6).assert_flag(Z, false);
+                run(&[0xB1, 0xED]).with_reg(Y, 0x01).with_flag(Z, true)
+                    .with_mem(0x00ED, &[0xFE, 0xCA]).with_mem(0xCAFE + 0x01, &[NON_ZERO])
+                    .step()
+                    .assert_flag(Z, false);
             }
         }
     }
