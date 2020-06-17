@@ -134,16 +134,23 @@ impl Cpu {
 
         self.total_cycles += 1;
 
-        let (op, addr_mode, _, _) = (match &self.ir {
-            0xA9 => Some((LDA, Imm, 2, 2)),
-            0xA5 => Some((LDA, Zpg, 2, 3)),
-            0xB5 => Some((LDA, ZpgX, 2, 4)),
-            0xAD => Some((LDA, Abs, 3, 4)),
-            0xBD => Some((LDA, AbsX, 3, 4)),
-            0xB9 => Some((LDA, AbsY, 3, 4)),
-            0xA1 => Some((LDA, XInd, 2, 6)),
-            0xB1 => Some((LDA, IndY, 2, 5)),
-            0x00 => Some((BRK, Imp, 0, 0)),
+        let (op, addr_mode) = (match &self.ir {
+            0xA9 => Some((LDA, Imm)),
+            0xA5 => Some((LDA, Zpg)),
+            0xB5 => Some((LDA, ZpgX)),
+            0xAD => Some((LDA, Abs)),
+            0xBD => Some((LDA, AbsX)),
+            0xB9 => Some((LDA, AbsY)),
+            0xA1 => Some((LDA, XInd)),
+            0xB1 => Some((LDA, IndY)),
+
+            0xA2 => Some((LDX, Imm)),
+            0xA6 => Some((LDX, Zpg)),
+            0xB6 => Some((LDX, ZpgY)),
+            0xAE => Some((LDX, Abs)),
+            0xBE => Some((LDX, AbsY)),
+
+            0x00 => Some((BRK, Imp)),
             _ => None
         }).unwrap();
 
@@ -315,6 +322,82 @@ impl Cpu {
                 self.set_zero_flag(self.a);
                 self.set_negative_flag(self.a);
 
+                self.timer_state = 0;
+            }
+            (LDX, Imm, 1) => {
+                self.data = self.fetch();
+                self.timer_state = 0;
+                self.x = self.data;
+                self.set_zero_flag(self.x);
+                self.set_negative_flag(self.x);
+            }
+            (LDX, Zpg, 1) => {
+                self.data = self.fetch();
+                self.timer_state = 2;
+            }
+            (LDX, Zpg, 2) => {
+                self.data = self.mem_read(u16::from_le_bytes([self.data, 0x00]));
+                self.x = self.data;
+                self.set_zero_flag(self.x);
+                self.set_negative_flag(self.x);
+                self.timer_state = 0;
+            }
+            (LDX, ZpgY, 1) => {
+                self.data = self.fetch();
+                self.timer_state = 2;
+            }
+            (LDX, ZpgY, 2) => {
+                self.addr_lo = self.data.wrapping_add(self.y);
+                self.timer_state = 3;
+            }
+            (LDX, ZpgY, 3) => {
+                self.addr_hi = 0x00;
+                self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                self.x = self.data;
+                self.set_zero_flag(self.x);
+                self.set_negative_flag(self.x);
+                self.timer_state = 0;
+            }
+            (LDX, Abs, 1) => {
+                self.data = self.fetch();
+                self.timer_state = 2;
+            }
+            (LDX, Abs, 2) => {
+                self.addr_hi = self.fetch();
+                self.timer_state = 3;
+            }
+            (LDX, Abs, 3) => {
+                self.addr_lo = self.data;
+                self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                self.x = self.data;
+                self.set_zero_flag(self.x);
+                self.set_negative_flag(self.x);
+                self.timer_state = 0;
+            }
+            (LDX, AbsY, 1) => {
+                self.data = self.fetch();
+                self.timer_state = 2;
+            }
+            (LDX, AbsY, 2) => {
+                let (new_addr, page_crossed) = self.data.overflowing_add(self.y);
+                self.addr_lo = new_addr;
+                self.addr_hi = self.fetch();
+
+                if page_crossed {
+                    self.timer_state = 3;
+                } else {
+                    self.timer_state = 4;
+                }
+            }
+            (LDX, AbsY, 3) => {
+                self.addr_hi = self.addr_hi.wrapping_add(1);
+                self.timer_state = 4;
+            }
+            (LDX, AbsY, 4) => {
+                self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
+                self.x = self.data;
+                self.set_zero_flag(self.x);
+                self.set_negative_flag(self.x);
                 self.timer_state = 0;
             }
             _ => unimplemented!()
