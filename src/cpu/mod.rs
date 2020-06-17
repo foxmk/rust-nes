@@ -159,6 +159,26 @@ impl Cpu {
                 self.ir = self.fetch();
                 self.timer_state = 1;
             }
+            (_, Zpg, 1) | (_, ZpgX, 1) | (_, ZpgY, 1) | (_, Abs, 1) | (_, AbsX, 1) | (_, AbsY, 1) | (_, XInd, 1) | (_, IndY, 1) => {
+                self.data = self.fetch();
+                self.timer_state = 2;
+            }
+            (_, ZpgX, 2) => {
+                self.addr_lo = self.data.wrapping_add(self.x);
+                self.timer_state = 3;
+            }
+            (_, ZpgY, 2) => {
+                self.addr_lo = self.data.wrapping_add(self.y);
+                self.timer_state = 3;
+            }
+            (_, Abs, 2) => {
+                self.addr_hi = self.fetch();
+                self.timer_state = 3;
+            }
+            (_, AbsX, 3) | (_, AbsY, 3) => {
+                self.addr_hi = self.addr_hi.wrapping_add(1);
+                self.timer_state = 4;
+            }
             (LDA, Imm, 1) => {
                 self.data = self.fetch();
                 self.timer_state = 0;
@@ -166,24 +186,12 @@ impl Cpu {
                 self.set_zero_flag(self.a);
                 self.set_negative_flag(self.a);
             }
-            (LDA, Zpg, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
-            }
             (LDA, Zpg, 2) => {
                 self.data = self.mem_read(u16::from_le_bytes([self.data, 0x00]));
                 self.a = self.data;
                 self.set_zero_flag(self.a);
                 self.set_negative_flag(self.a);
                 self.timer_state = 0;
-            }
-            (LDA, ZpgX, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
-            }
-            (LDA, ZpgX, 2) => {
-                self.addr_lo = self.data.wrapping_add(self.x);
-                self.timer_state = 3;
             }
             (LDA, ZpgX, 3) => {
                 self.addr_hi = 0x00;
@@ -193,14 +201,6 @@ impl Cpu {
                 self.set_negative_flag(self.a);
                 self.timer_state = 0;
             }
-            (LDA, Abs, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
-            }
-            (LDA, Abs, 2) => {
-                self.addr_hi = self.fetch();
-                self.timer_state = 3;
-            }
             (LDA, Abs, 3) => {
                 self.addr_lo = self.data;
                 self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
@@ -208,10 +208,6 @@ impl Cpu {
                 self.set_zero_flag(self.a);
                 self.set_negative_flag(self.a);
                 self.timer_state = 0;
-            }
-            (LDA, AbsX, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
             }
             (LDA, AbsX, 2) => {
                 let (new_addr, page_crossed) = self.data.overflowing_add(self.x);
@@ -224,20 +220,12 @@ impl Cpu {
                     self.timer_state = 4;
                 }
             }
-            (LDA, AbsX, 3) => {
-                self.addr_hi = self.addr_hi.wrapping_add(1);
-                self.timer_state = 4;
-            }
             (LDA, AbsX, 4) => {
                 self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
                 self.a = self.data;
                 self.set_zero_flag(self.a);
                 self.set_negative_flag(self.a);
                 self.timer_state = 0;
-            }
-            (LDA, AbsY, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
             }
             (LDA, AbsY, 2) => {
                 let (new_addr, page_crossed) = self.data.overflowing_add(self.y);
@@ -250,20 +238,12 @@ impl Cpu {
                     self.timer_state = 4;
                 }
             }
-            (LDA, AbsY, 3) => {
-                self.addr_hi = self.addr_hi.wrapping_add(1);
-                self.timer_state = 4;
-            }
             (LDA, AbsY, 4) => {
                 self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
                 self.a = self.data;
                 self.set_zero_flag(self.a);
                 self.set_negative_flag(self.a);
                 self.timer_state = 0;
-            }
-            (LDA, XInd, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
             }
             (LDA, XInd, 2) => {
                 self.addr_lo = self.data.wrapping_add(self.x);
@@ -285,10 +265,6 @@ impl Cpu {
                 self.set_zero_flag(self.a);
                 self.set_negative_flag(self.a);
                 self.timer_state = 0;
-            }
-            (LDA, IndY, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
             }
             (LDA, IndY, 2) => {
                 self.addr_lo = self.data;
@@ -331,24 +307,12 @@ impl Cpu {
                 self.set_zero_flag(self.x);
                 self.set_negative_flag(self.x);
             }
-            (LDX, Zpg, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
-            }
             (LDX, Zpg, 2) => {
                 self.data = self.mem_read(u16::from_le_bytes([self.data, 0x00]));
                 self.x = self.data;
                 self.set_zero_flag(self.x);
                 self.set_negative_flag(self.x);
                 self.timer_state = 0;
-            }
-            (LDX, ZpgY, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
-            }
-            (LDX, ZpgY, 2) => {
-                self.addr_lo = self.data.wrapping_add(self.y);
-                self.timer_state = 3;
             }
             (LDX, ZpgY, 3) => {
                 self.addr_hi = 0x00;
@@ -358,14 +322,6 @@ impl Cpu {
                 self.set_negative_flag(self.x);
                 self.timer_state = 0;
             }
-            (LDX, Abs, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
-            }
-            (LDX, Abs, 2) => {
-                self.addr_hi = self.fetch();
-                self.timer_state = 3;
-            }
             (LDX, Abs, 3) => {
                 self.addr_lo = self.data;
                 self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
@@ -373,10 +329,6 @@ impl Cpu {
                 self.set_zero_flag(self.x);
                 self.set_negative_flag(self.x);
                 self.timer_state = 0;
-            }
-            (LDX, AbsY, 1) => {
-                self.data = self.fetch();
-                self.timer_state = 2;
             }
             (LDX, AbsY, 2) => {
                 let (new_addr, page_crossed) = self.data.overflowing_add(self.y);
@@ -388,10 +340,6 @@ impl Cpu {
                 } else {
                     self.timer_state = 4;
                 }
-            }
-            (LDX, AbsY, 3) => {
-                self.addr_hi = self.addr_hi.wrapping_add(1);
-                self.timer_state = 4;
             }
             (LDX, AbsY, 4) => {
                 self.data = self.mem_read(u16::from_le_bytes([self.addr_lo, self.addr_hi]));
