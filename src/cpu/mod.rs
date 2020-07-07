@@ -7,7 +7,7 @@ type Addr = u16;
 type Memory = dyn IndexMut<Addr, Output=u8>;
 
 #[derive(Debug, Copy, Clone)]
-enum Flag {
+pub enum Flag {
     N = 0b10000000,
     V = 0b01000000,
     D = 0b00001000,
@@ -331,19 +331,21 @@ impl Cpu {
 }
 
 #[cfg(test)]
-mod test {
+mod opcode_tests;
+
+#[cfg(test)]
+mod test_helpers {
     use std::io::Write;
     use std::ops::Index;
 
-    use Flag::*;
     use Register::*;
 
     use super::*;
 
-    const NEG_NUMBER: u8 = 0x81;
-    const POS_NUMBER: u8 = 0x01;
-    const ZERO: u8 = 0x00;
-    const NON_ZERO: u8 = 0x01;
+    pub const NEG_NUMBER: u8 = 0x81;
+    pub const POS_NUMBER: u8 = 0x01;
+    pub const ZERO: u8 = 0x00;
+    pub const NON_ZERO: u8 = 0x01;
 
     struct ArrayMemory([u8; u16::MAX as usize]);
 
@@ -362,15 +364,15 @@ mod test {
     }
 
     #[derive(Debug)]
-    enum Register { A, X, Y }
+    pub enum Register { A, X, Y }
 
-    struct TestCase {
+    pub struct TestCase {
         message: String,
         mem: Rc<RefCell<ArrayMemory>>,
         cpu: Cpu,
     }
 
-    fn run(program: &[u8]) -> TestCase {
+    pub fn run(program: &[u8]) -> TestCase {
         let mem = Rc::new(RefCell::new(ArrayMemory([0x00; u16::MAX as usize])));
         let cpu = Cpu::new(mem.clone());
 
@@ -380,13 +382,13 @@ mod test {
     }
 
     impl TestCase {
-        fn with_mem(&mut self, start: u16, bytes: &[u8]) -> &mut TestCase {
+        pub fn with_mem(&mut self, start: u16, bytes: &[u8]) -> &mut TestCase {
             self.message = format!("{} and with memory {:02X?} at 0x{:02X?}", self.message, bytes, start);
             let _ = (&mut RefCell::borrow_mut(&self.mem).0[start as usize..]).write_all(bytes);
             self
         }
 
-        fn with_reg(&mut self, reg: Register, byte: u8) -> &mut TestCase {
+        pub fn with_reg(&mut self, reg: Register, byte: u8) -> &mut TestCase {
             self.message = format!("{} and with register {:?} set to 0x{:02X?}", self.message, reg, byte);
             match reg {
                 A => self.cpu.a = byte,
@@ -396,13 +398,13 @@ mod test {
             self
         }
 
-        fn with_flag(&mut self, flag: Flag, val: bool) -> &mut TestCase {
+        pub fn with_flag(&mut self, flag: Flag, val: bool) -> &mut TestCase {
             self.message = format!("{} and with flag {:?} {}", self.message, flag, if val { "set" } else { "unset" });
             self.cpu.flags ^= flag as u8;
             self
         }
 
-        fn assert_reg(&self, reg: Register, want: u8) -> &TestCase {
+        pub fn assert_reg(&self, reg: Register, want: u8) -> &TestCase {
             let got = match reg {
                 Register::A => self.cpu.a,
                 Register::X => self.cpu.x,
@@ -412,30 +414,27 @@ mod test {
             self
         }
 
-        fn assert_flag(&self, flag: Flag, want: bool) -> &TestCase {
+        pub fn assert_flag(&self, flag: Flag, want: bool) -> &TestCase {
             let got = (self.cpu.flags & flag as u8) > 0;
             assert_eq!(got, want, "{} flag {:?} should be {}", self.message, flag.clone(), if want { "set" } else { "unset" });
             self
         }
 
-        fn assert_mem(&self, addr: u16, want: u8) -> &TestCase {
+        pub fn assert_mem(&self, addr: u16, want: u8) -> &TestCase {
             let got = RefCell::borrow(&self.mem)[addr];
             assert_eq!(got, want, "{} memory at address 0x{:04X?} should be 0x{:#02X?}, but was 0x{:02X?}", self.message, addr, want, got);
             self
         }
 
-        fn assert_cycles(&self, want: usize) -> &TestCase {
+        pub fn assert_cycles(&self, want: usize) -> &TestCase {
             let got = self.cpu.total_cycles;
             assert_eq!(got, want, "{} total cycles to be {}, but was {}", self.message, want, got);
             self
         }
 
-        fn step(&mut self) -> &TestCase {
+        pub fn step(&mut self) -> &TestCase {
             self.cpu.step();
             self
         }
     }
-
-
-    mod opcode;
 }
