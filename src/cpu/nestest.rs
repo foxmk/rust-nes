@@ -1,6 +1,6 @@
-use core::fmt;
-use std::cell::{Ref, RefCell};
-use std::fmt::{Debug, Display, Formatter};
+use std::cell::RefCell;
+use std::fmt::{Debug, Display};
+use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::io::Write;
@@ -29,7 +29,7 @@ impl IndexMut<u16> for ArrayMemory {
 struct Status(u8);
 
 impl Display for Status {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let n = if self.0 & 0b10000000 > 0 { "N" } else { "n" };
         let v = if self.0 & 0b01000000 > 0 { "V" } else { "v" };
         let d = if self.0 & 0b00001000 > 0 { "D" } else { "d" };
@@ -49,6 +49,45 @@ struct ReferenceState {
     p: Status,
     cyc: usize,
     op: String,
+}
+
+#[test]
+fn nestest() {
+    let mut mem = ArrayMemory([0x00; u16::MAX as usize]);
+
+    load_test_rom(&mut mem.0);
+
+    let mut cpu = Cpu::new(Rc::new(RefCell::new(mem)));
+
+    let mut op = "<INIT>".to_string();
+    let mut prev = 0;
+    let mut prev_cpu = 0;
+
+    let log_file = File::open("src/cpu/nestest.log.txt").expect("Log file not found");
+    let log_file = BufReader::new(log_file);
+
+    for (step, line) in log_file.lines().enumerate() {
+        let want = parse_line(&line.expect("Error reading log file"));
+
+        assert_eq!(cpu.pc, want.pc, "On step {}, after executing {}, PC should be 0x{:04X?}, but was 0x{:04X?}", step, op, want.pc, cpu.pc);
+        assert_eq!(cpu.a, want.a, "On step {}, after executing {}, A should be 0x{:02X?}, but was 0x{:02X?}", step, op, want.a, cpu.a);
+        assert_eq!(cpu.x, want.x, "On step {}, after executing {}, X should be 0x{:02X?}, but was 0x{:02X?}", step, op, want.x, cpu.x);
+        assert_eq!(cpu.y, want.y, "On step {}, after executing {}, Y should be 0x{:02X?}, but was 0x{:02X?}", step, op, want.y, cpu.y);
+        // assert_eq!(cpu.flags, state.p.0, "On step {}, after executing {}, P should be {}, but was {}", step, op, state.p, Status(cpu.flags));
+        // assert_eq!(cpu.total_cycles, state.cyc, "On step {}, {} should take {} cycles, but took {}", step, op, state.cyc - prev, cpu.total_cycles - prev_cpu);
+
+        op = want.op;
+        prev = want.cyc;
+        prev_cpu = cpu.total_cycles;
+        cpu.step()
+    }
+}
+
+fn load_test_rom(mem: &mut [u8; u16::MAX as usize]) {
+    let rom_size = 0x4000;
+    let rom = &include_bytes!("nestest.nes")[0x0010..(0x0010 + rom_size)];
+    (&mut mem[0xC000..]).write(&rom);
+    (&mut mem[0x8000..]).write(&rom);
 }
 
 fn parse_line(l: &str) -> ReferenceState {
@@ -73,43 +112,5 @@ fn parse_line(l: &str) -> ReferenceState {
         p: Status(p),
         cyc,
         op,
-    }
-}
-
-#[test]
-fn nestest() {
-    let mem = Rc::new(RefCell::new(ArrayMemory([0x00; u16::MAX as usize])));
-    {
-        let rom = include_bytes!("nestest.nes");
-        (&mut mem.borrow_mut().0[0xC000..]).write(&rom[0x0010..(0x4000 + 0x0010)]);
-        (&mut mem.borrow_mut().0[0x8000..]).write(&rom[0x0010..(0x4000 + 0x0010)]);
-    }
-
-    let b = mem.borrow().0[0xC000];
-    let mut cpu = Cpu::new(mem.clone());
-    cpu.pc = 0xC000;
-    cpu.flags |= Flag::I as u8;
-    cpu.total_cycles = 7;
-
-    let log_file = File::open("src/cpu/nestest.log.txt").unwrap();
-    let log_file = BufReader::new(log_file);
-
-    let mut op = "<INIT>".to_string();
-    let mut prev = 0;
-    let mut prev_cpu = 0;
-    for (step, line) in log_file.lines().enumerate() {
-        let l = line.unwrap();
-        let state = parse_line(&l);
-        assert_eq!(cpu.pc, state.pc, "On step {}, after executing {}, PC should be 0x{:04X?}, but was 0x{:04X?}", step, op, state.pc, cpu.pc);
-        assert_eq!(cpu.a, state.a, "On step {}, after executing {}, A should be 0x{:02X?}, but was 0x{:02X?}", step, op, state.a, cpu.a);
-        assert_eq!(cpu.x, state.x, "On step {}, after executing {}, X should be 0x{:02X?}, but was 0x{:02X?}", step, op, state.x, cpu.x);
-        assert_eq!(cpu.y, state.y, "On step {}, after executing {}, Y should be 0x{:02X?}, but was 0x{:02X?}", step, op, state.y, cpu.y);
-        // assert_eq!(cpu.flags, state.p.0, "On step {}, after executing {}, P should be {}, but was {}", step, op, state.p, Status(cpu.flags));
-        // assert_eq!(cpu.total_cycles, state.cyc, "On step {}, {} should take {} cycles, but took {}", step, op, state.cyc - prev, cpu.total_cycles - prev_cpu);
-
-        op = state.op;
-        prev = state.cyc;
-        prev_cpu = cpu.total_cycles;
-        cpu.step()
     }
 }

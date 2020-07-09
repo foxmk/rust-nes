@@ -110,9 +110,9 @@ impl Cpu {
             a: 0x00,
             x: 0x00,
             y: 0x00,
-            pc: 0x0000,
-            flags: 0b00100000,
-            total_cycles: 0,
+            pc: 0xC000,
+            flags: 0b00100100,
+            total_cycles: 7,
         }
     }
 
