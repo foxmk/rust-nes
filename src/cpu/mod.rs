@@ -124,6 +124,8 @@ impl Cpu {
 
         // Decode
         let (op, addr_mode) = (match &byte {
+            0x4C => Some((JMP, Abs)),
+            0x86 => Some((STX, Zpg)),
             0xA9 => Some((LDA, Imm)),
             0xA5 => Some((LDA, Zpg)),
             0xB5 => Some((LDA, ZpgX)),
@@ -141,30 +143,34 @@ impl Cpu {
 
             0x00 => Some((BRK, Imp)),
             _ => None
-        }).unwrap();
+        }).unwrap_or_else(|| unimplemented!("Unimplemeted opcode 0x{:02X?}", byte));
 
-        let operand = match addr_mode {
-            Imp => 0xFF,
-            Acc => self.a,
-            Imm => self.fetch(),
+        let (operand, eff_addr) = match addr_mode {
+            Imp => (0xFF, None),
+            Acc => (self.a, None),
+            Imm => (self.fetch(), None),
             Zpg => {
                 let zpg_addr = self.fetch();
-                self.mem_read(u16::from_le_bytes([zpg_addr, 0x00]))
+                let eff_addr = u16::from_le_bytes([zpg_addr, 0x00]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             ZpgX => {
                 let zpg_addr = self.fetch();
                 self.inc();
-                self.mem_read(u16::from_le_bytes([zpg_addr.wrapping_add(self.x), 0x00]))
+                let eff_addr = u16::from_le_bytes([zpg_addr.wrapping_add(self.x), 0x00]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             ZpgY => {
                 let zpg_addr = self.fetch();
                 self.inc();
-                self.mem_read(u16::from_le_bytes([zpg_addr.wrapping_add(self.y), 0x00]))
+                let eff_addr = u16::from_le_bytes([zpg_addr.wrapping_add(self.y), 0x00]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             Abs => {
                 let addr_lo = self.fetch();
                 let addr_hi = self.fetch();
-                self.mem_read(u16::from_le_bytes([addr_lo, addr_hi]))
+                let eff_addr = u16::from_le_bytes([addr_lo, addr_hi]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             AbsX => {
                 let addr_lo = self.fetch();
@@ -178,7 +184,8 @@ impl Cpu {
                     addr_hi
                 };
 
-                self.mem_read(u16::from_le_bytes([eff_lo, addr_hi]))
+                let eff_addr = u16::from_le_bytes([eff_lo, addr_hi]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             AbsY => {
                 let addr_lo = self.fetch();
@@ -192,7 +199,8 @@ impl Cpu {
                     addr_hi
                 };
 
-                self.mem_read(u16::from_le_bytes([eff_lo, addr_hi]))
+                let eff_addr = u16::from_le_bytes([eff_lo, addr_hi]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             Ind => {
                 let addr_lo = self.fetch();
@@ -200,7 +208,8 @@ impl Cpu {
 
                 let eff_lo = self.mem_read(u16::from_le_bytes([addr_lo, addr_hi]));
                 let eff_hi = self.mem_read(u16::from_le_bytes([addr_lo, addr_hi]).wrapping_add(1));
-                self.mem_read(u16::from_le_bytes([eff_lo, eff_hi]))
+                let eff_addr = u16::from_le_bytes([eff_lo, eff_hi]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             XInd => {
                 let zpg_addr = self.fetch().wrapping_add(self.x);
@@ -209,7 +218,8 @@ impl Cpu {
                 let eff_lo = self.mem_read(u16::from_le_bytes([zpg_addr, 0x00]));
                 let eff_hi = self.mem_read(u16::from_le_bytes([zpg_addr, 0x00]).wrapping_add(1));
 
-                self.mem_read(u16::from_le_bytes([eff_lo, eff_hi]))
+                let eff_addr = u16::from_le_bytes([eff_lo, eff_hi]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             IndY => {
                 let zpg_addr = self.fetch();
@@ -225,7 +235,8 @@ impl Cpu {
                     addr_hi
                 };
 
-                self.mem_read(u16::from_le_bytes([eff_lo, eff_hi]))
+                let eff_addr = u16::from_le_bytes([eff_lo, eff_hi]);
+                (self.mem_read(eff_addr), Some(eff_addr))
             }
             Rel => unimplemented!()
         };
@@ -258,7 +269,9 @@ impl Cpu {
             INC => {}
             INX => {}
             INY => {}
-            JMP => {}
+            JMP => {
+                self.pc = eff_addr.unwrap();
+            }
             JSR => {}
             LDA => {
                 self.a = operand;
@@ -287,7 +300,9 @@ impl Cpu {
             SED => {}
             SEI => {}
             STA => {}
-            STX => {}
+            STX => {
+                self.mem.borrow_mut()[eff_addr.unwrap()] = self.x;
+            }
             STY => {}
             TAX => {}
             TAY => {}
@@ -305,10 +320,10 @@ impl Cpu {
     }
 
     fn set_negative_flag(&mut self, i: u8) {
-        if i & 0b10000000 > 0 {
-            self.flags |= Flag::N as u8;
-        } else {
+        if (i as i8) > 0 {
             self.flags ^= Flag::N as u8;
+        } else {
+            self.flags |= Flag::N as u8;
         }
     }
 

@@ -8,9 +8,6 @@ use std::ops::{Index, IndexMut};
 use std::rc::Rc;
 
 use crate::cpu::{Addr, Cpu, Flag};
-use crate::cpu::Flag::*;
-use crate::cpu::test_helpers::*;
-use crate::cpu::test_helpers::Register::*;
 
 struct ArrayMemory([u8; u16::MAX as usize]);
 
@@ -43,13 +40,15 @@ impl Display for Status {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 struct ReferenceState {
     pc: Addr,
     a: u8,
     x: u8,
     y: u8,
     p: Status,
+    cyc: usize,
+    op: String,
 }
 
 fn parse_line(l: &str) -> ReferenceState {
@@ -62,6 +61,9 @@ fn parse_line(l: &str) -> ReferenceState {
     let y = u8::from_str_radix(y_as_s, 16).expect("Not a hex");
     let p_as_s = l.get(65..67).unwrap();
     let p = u8::from_str_radix(p_as_s, 16).expect("Not a hex");
+    let cyc_as_s = l.get(90..).unwrap().trim_end();
+    let cyc = usize::from_str_radix(cyc_as_s, 10).expect("Not a dec");
+    let op = l.get(16..48).unwrap().trim_end().to_string();
 
     ReferenceState {
         pc,
@@ -69,6 +71,8 @@ fn parse_line(l: &str) -> ReferenceState {
         x,
         y,
         p: Status(p),
+        cyc,
+        op,
     }
 }
 
@@ -77,29 +81,35 @@ fn nestest() {
     let mem = Rc::new(RefCell::new(ArrayMemory([0x00; u16::MAX as usize])));
     {
         let rom = include_bytes!("nestest.nes");
-        (&mut mem.borrow_mut().0[0xC000..]).write(&rom[0x0010..(0x4000+0x0010)]);
-        (&mut mem.borrow_mut().0[0x8000..]).write(&rom[0x0010..(0x4000+0x0010)]);
+        (&mut mem.borrow_mut().0[0xC000..]).write(&rom[0x0010..(0x4000 + 0x0010)]);
+        (&mut mem.borrow_mut().0[0x8000..]).write(&rom[0x0010..(0x4000 + 0x0010)]);
     }
 
     let b = mem.borrow().0[0xC000];
-    println!("0x{:02X?}", b);
     let mut cpu = Cpu::new(mem.clone());
     cpu.pc = 0xC000;
     cpu.flags |= Flag::I as u8;
+    cpu.total_cycles = 7;
 
     let log_file = File::open("src/cpu/nestest.log.txt").unwrap();
     let log_file = BufReader::new(log_file);
 
+    let mut op = "<INIT>".to_string();
+    let mut prev = 0;
+    let mut prev_cpu = 0;
     for (step, line) in log_file.lines().enumerate() {
         let l = line.unwrap();
         let state = parse_line(&l);
+        assert_eq!(cpu.pc, state.pc, "On step {}, after executing {}, PC should be 0x{:04X?}, but was 0x{:04X?}", step, op, state.pc, cpu.pc);
+        assert_eq!(cpu.a, state.a, "On step {}, after executing {}, A should be 0x{:02X?}, but was 0x{:02X?}", step, op, state.a, cpu.a);
+        assert_eq!(cpu.x, state.x, "On step {}, after executing {}, X should be 0x{:02X?}, but was 0x{:02X?}", step, op, state.x, cpu.x);
+        assert_eq!(cpu.y, state.y, "On step {}, after executing {}, Y should be 0x{:02X?}, but was 0x{:02X?}", step, op, state.y, cpu.y);
+        // assert_eq!(cpu.flags, state.p.0, "On step {}, after executing {}, P should be {}, but was {}", step, op, state.p, Status(cpu.flags));
+        // assert_eq!(cpu.total_cycles, state.cyc, "On step {}, {} should take {} cycles, but took {}", step, op, state.cyc - prev, cpu.total_cycles - prev_cpu);
 
-        assert_eq!(cpu.pc, state.pc, "On step {} PC should be 0x{:04X?}, but was 0x{:04X?}", step, state.pc, cpu.pc);
-        assert_eq!(cpu.a, state.a, "On step {} A should be 0x{:02X?}, but was 0x{:02X?}", step, state.a, cpu.a);
-        assert_eq!(cpu.x, state.x, "On step {} X should be 0x{:02X?}, but was 0x{:02X?}", step, state.x, cpu.x);
-        assert_eq!(cpu.y, state.y, "On step {} Y should be 0x{:02X?}, but was 0x{:02X?}", step, state.y, cpu.y);
-        assert_eq!(cpu.flags, state.p.0, "On step {} P should be {}, but was {}", step, state.p, Status(cpu.flags));
-
+        op = state.op;
+        prev = state.cyc;
+        prev_cpu = cpu.total_cycles;
         cpu.step()
     }
 }
