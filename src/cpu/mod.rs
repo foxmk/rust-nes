@@ -111,7 +111,7 @@ impl Cpu {
             x: 0x00,
             y: 0x00,
             pc: 0x0000,
-            flags: 0b00000000,
+            flags: 0b00100000,
             total_cycles: 0,
         }
     }
@@ -144,9 +144,9 @@ impl Cpu {
         }).unwrap();
 
         let operand = match addr_mode {
-            Imm => {
-                self.fetch()
-            }
+            Imp => 0xFF,
+            Acc => self.a,
+            Imm => self.fetch(),
             Zpg => {
                 let zpg_addr = self.fetch();
                 self.mem_read(u16::from_le_bytes([zpg_addr, 0x00]))
@@ -227,7 +227,7 @@ impl Cpu {
 
                 self.mem_read(u16::from_le_bytes([eff_lo, eff_hi]))
             }
-            _ => unimplemented!()
+            Rel => unimplemented!()
         };
 
         match op {
@@ -332,6 +332,9 @@ impl Cpu {
 
 #[cfg(test)]
 mod opcode_tests;
+
+#[cfg(test)]
+mod nestest;
 
 #[cfg(test)]
 mod test_helpers {
