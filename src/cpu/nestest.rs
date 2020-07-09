@@ -1,6 +1,9 @@
-use std::cell::{RefCell, Ref};
+use core::fmt;
+use std::cell::{Ref, RefCell};
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::io::{BufRead, BufReader};
+use std::io::Write;
 use std::ops::{Index, IndexMut};
 use std::rc::Rc;
 
@@ -8,8 +11,6 @@ use crate::cpu::{Addr, Cpu, Flag};
 use crate::cpu::Flag::*;
 use crate::cpu::test_helpers::*;
 use crate::cpu::test_helpers::Register::*;
-use std::fmt::{Debug, Display, Formatter};
-use core::fmt;
 
 struct ArrayMemory([u8; u16::MAX as usize]);
 
@@ -30,14 +31,14 @@ impl IndexMut<u16> for ArrayMemory {
 #[derive(Debug, Copy, Clone)]
 struct Status(u8);
 
-impl Display for  Status {
+impl Display for Status {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let n = if self.0 & 0b10000000 >0 { "N" } else { "n" };
-        let v = if self.0 & 0b01000000 >0 { "V" } else { "v" };
-        let d = if self.0 & 0b00001000 >0 { "D" } else { "d" };
-        let i = if self.0 & 0b00000100 >0 { "I" } else { "i" };
-        let z = if self.0 & 0b00000010 >0 { "Z" } else { "z" };
-        let c = if self.0 & 0b00000001 >0 { "C" } else { "c" };
+        let n = if self.0 & 0b10000000 > 0 { "N" } else { "n" };
+        let v = if self.0 & 0b01000000 > 0 { "V" } else { "v" };
+        let d = if self.0 & 0b00001000 > 0 { "D" } else { "d" };
+        let i = if self.0 & 0b00000100 > 0 { "I" } else { "i" };
+        let z = if self.0 & 0b00000010 > 0 { "Z" } else { "z" };
+        let c = if self.0 & 0b00000001 > 0 { "C" } else { "c" };
         f.write_str(format!("{}{}{}{}{}{}", n, v, d, i, z, c).as_str())
     }
 }
@@ -48,10 +49,10 @@ struct ReferenceState {
     a: u8,
     x: u8,
     y: u8,
-    p: Status
+    p: Status,
 }
 
-fn parse_line(l: &str) -> ReferenceState{
+fn parse_line(l: &str) -> ReferenceState {
     let pc = u16::from_str_radix(l.get(0..4).unwrap(), 16).expect("Not a hex");
     let a_as_s = l.get(50..52).unwrap();
     let a = u8::from_str_radix(a_as_s, 8).expect("Not a hex");
@@ -67,16 +68,21 @@ fn parse_line(l: &str) -> ReferenceState{
         a,
         x,
         y,
-        p: Status(p)
+        p: Status(p),
     }
 }
 
 #[test]
 fn nestest() {
     let mem = Rc::new(RefCell::new(ArrayMemory([0x00; u16::MAX as usize])));
-    // {
-    //     mem.borrow_mut().0.write_slice(0x0000, include_bytes!("test_roms/nestest/nestest.nes"));
-    // }
+    {
+        let rom = include_bytes!("nestest.nes");
+        (&mut mem.borrow_mut().0[0xC000..]).write(&rom[0x0010..(0x4000+0x0010)]);
+        (&mut mem.borrow_mut().0[0x8000..]).write(&rom[0x0010..(0x4000+0x0010)]);
+    }
+
+    let b = mem.borrow().0[0xC000];
+    println!("0x{:02X?}", b);
     let mut cpu = Cpu::new(mem.clone());
     cpu.pc = 0xC000;
     cpu.flags |= Flag::I as u8;
@@ -87,7 +93,6 @@ fn nestest() {
     for (step, line) in log_file.lines().enumerate() {
         let l = line.unwrap();
         let state = parse_line(&l);
-        println!("{:04X?}", &state);
 
         assert_eq!(cpu.pc, state.pc, "On step {} PC should be 0x{:04X?}, but was 0x{:04X?}", step, state.pc, cpu.pc);
         assert_eq!(cpu.a, state.a, "On step {} A should be 0x{:02X?}, but was 0x{:02X?}", step, state.a, cpu.a);
