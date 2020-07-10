@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::ops::{IndexMut};
+use std::ops::IndexMut;
 use std::rc::Rc;
 
 type Flags = u8;
@@ -346,24 +346,19 @@ impl Cpu {
 }
 
 #[cfg(test)]
-mod opcode_tests;
-
-#[cfg(test)]
-mod nestest;
-
-#[cfg(test)]
-mod test_helpers {
+mod test {
+    use std::cell::RefCell;
+    use std::fmt::{Debug, Display};
+    use std::fmt;
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
     use std::io::Write;
-    use std::ops::Index;
+    use std::ops::{Index, IndexMut};
+    use std::rc::Rc;
 
-    use Register::*;
+    use crate::cpu::{Addr, Cpu, Flag};
 
     use super::*;
-
-    pub const NEG_NUMBER: u8 = 0x81;
-    pub const POS_NUMBER: u8 = 0x01;
-    pub const ZERO: u8 = 0x00;
-    pub const NON_ZERO: u8 = 0x01;
 
     struct ArrayMemory([u8; u16::MAX as usize]);
 
@@ -381,78 +376,93 @@ mod test_helpers {
         }
     }
 
-    #[derive(Debug)]
-    pub enum Register { A, X, Y }
+    #[derive(Debug, Copy, Clone)]
+    struct Status(u8);
 
-    pub struct TestCase {
-        message: String,
-        mem: Rc<RefCell<ArrayMemory>>,
-        cpu: Cpu,
+    impl Display for Status {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let n = if self.0 & 0b10000000 > 0 { "N" } else { "n" };
+            let v = if self.0 & 0b01000000 > 0 { "V" } else { "v" };
+            let d = if self.0 & 0b00001000 > 0 { "D" } else { "d" };
+            let i = if self.0 & 0b00000100 > 0 { "I" } else { "i" };
+            let z = if self.0 & 0b00000010 > 0 { "Z" } else { "z" };
+            let c = if self.0 & 0b00000001 > 0 { "C" } else { "c" };
+            f.write_str(format!("{}{}{}{}{}{}", n, v, d, i, z, c).as_str())
+        }
     }
 
-    pub fn run(program: &[u8]) -> TestCase {
-        let mem = Rc::new(RefCell::new(ArrayMemory([0x00; u16::MAX as usize])));
-        let cpu = Cpu::new(mem.clone());
-
-        let _ = (&mut RefCell::borrow_mut(&mem).0[0x0000..]).write_all(program);
-
-        TestCase { message: format!("After running CPU with program {:02X?}", program), mem, cpu }
+    #[derive(Debug, Clone)]
+    struct ReferenceState {
+        pc: Addr,
+        a: u8,
+        x: u8,
+        y: u8,
+        p: Status,
+        cyc: usize,
+        op: String,
     }
 
-    impl TestCase {
-        pub fn with_mem(&mut self, start: u16, bytes: &[u8]) -> &mut TestCase {
-            self.message = format!("{} and with memory {:02X?} at 0x{:02X?}", self.message, bytes, start);
-            let _ = (&mut RefCell::borrow_mut(&self.mem).0[start as usize..]).write_all(bytes);
-            self
-        }
+    #[test]
+    fn nestest() {
+        let mut mem = ArrayMemory([0x00; u16::MAX as usize]);
 
-        pub fn with_reg(&mut self, reg: Register, byte: u8) -> &mut TestCase {
-            self.message = format!("{} and with register {:?} set to 0x{:02X?}", self.message, reg, byte);
-            match reg {
-                A => self.cpu.a = byte,
-                X => self.cpu.x = byte,
-                Y => self.cpu.y = byte,
-            }
-            self
-        }
+        load_test_rom(&mut mem.0);
 
-        pub fn with_flag(&mut self, flag: Flag, val: bool) -> &mut TestCase {
-            self.message = format!("{} and with flag {:?} {}", self.message, flag, if val { "set" } else { "unset" });
-            self.cpu.flags ^= flag as u8;
-            self
-        }
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(mem)));
 
-        pub fn assert_reg(&self, reg: Register, want: u8) -> &TestCase {
-            let got = match reg {
-                Register::A => self.cpu.a,
-                Register::X => self.cpu.x,
-                Register::Y => self.cpu.y,
-            };
-            assert_eq!(got, want, "{} value at register {:?} should be 0x{:02X?}, but was 0x{:02X?}", self.message, reg, want, got);
-            self
-        }
+        let mut op = "<INIT>".to_string();
+        let mut prev = 0;
+        let mut prev_cpu = 0;
 
-        pub fn assert_flag(&self, flag: Flag, want: bool) -> &TestCase {
-            let got = (self.cpu.flags & flag as u8) > 0;
-            assert_eq!(got, want, "{} flag {:?} should be {}", self.message, flag.clone(), if want { "set" } else { "unset" });
-            self
-        }
+        let log_file = File::open("src/cpu/nestest.log.txt").expect("Log file not found");
+        let log_file = BufReader::new(log_file);
 
-        pub fn assert_mem(&self, addr: u16, want: u8) -> &TestCase {
-            let got = RefCell::borrow(&self.mem)[addr];
-            assert_eq!(got, want, "{} memory at address 0x{:04X?} should be 0x{:#02X?}, but was 0x{:02X?}", self.message, addr, want, got);
-            self
-        }
+        for (step, line) in log_file.lines().enumerate() {
+            let want = parse_line(&line.expect("Error reading log file"));
 
-        pub fn assert_cycles(&self, want: usize) -> &TestCase {
-            let got = self.cpu.total_cycles;
-            assert_eq!(got, want, "{} total cycles to be {}, but was {}", self.message, want, got);
-            self
-        }
+            assert_eq!(cpu.pc, want.pc, "On step {}, after executing {}, PC should be 0x{:04X?}, but was 0x{:04X?}", step, op, want.pc, cpu.pc);
+            assert_eq!(cpu.a, want.a, "On step {}, after executing {}, A should be 0x{:02X?}, but was 0x{:02X?}", step, op, want.a, cpu.a);
+            assert_eq!(cpu.x, want.x, "On step {}, after executing {}, X should be 0x{:02X?}, but was 0x{:02X?}", step, op, want.x, cpu.x);
+            assert_eq!(cpu.y, want.y, "On step {}, after executing {}, Y should be 0x{:02X?}, but was 0x{:02X?}", step, op, want.y, cpu.y);
+            // assert_eq!(cpu.flags, state.p.0, "On step {}, after executing {}, P should be {}, but was {}", step, op, state.p, Status(cpu.flags));
+            // assert_eq!(cpu.total_cycles, state.cyc, "On step {}, {} should take {} cycles, but took {}", step, op, state.cyc - prev, cpu.total_cycles - prev_cpu);
 
-        pub fn step(&mut self) -> &TestCase {
-            self.cpu.step();
-            self
+            op = want.op;
+            prev = want.cyc;
+            prev_cpu = cpu.total_cycles;
+            cpu.step()
+        }
+    }
+
+    fn load_test_rom(mem: &mut [u8; u16::MAX as usize]) {
+        let rom_size = 0x4000;
+        let rom = &include_bytes!("nestest.nes")[0x0010..(0x0010 + rom_size)];
+        (&mut mem[0xC000..]).write(&rom);
+        (&mut mem[0x8000..]).write(&rom);
+    }
+
+    fn parse_line(l: &str) -> ReferenceState {
+        let pc = u16::from_str_radix(l.get(0..4).unwrap(), 16).expect("Not a hex");
+        let a_as_s = l.get(50..52).unwrap();
+        let a = u8::from_str_radix(a_as_s, 8).expect("Not a hex");
+        let x_as_s = l.get(55..57).unwrap();
+        let x = u8::from_str_radix(x_as_s, 16).expect("Not a hex");
+        let y_as_s = l.get(60..62).unwrap();
+        let y = u8::from_str_radix(y_as_s, 16).expect("Not a hex");
+        let p_as_s = l.get(65..67).unwrap();
+        let p = u8::from_str_radix(p_as_s, 16).expect("Not a hex");
+        let cyc_as_s = l.get(90..).unwrap().trim_end();
+        let cyc = usize::from_str_radix(cyc_as_s, 10).expect("Not a dec");
+        let op = l.get(16..48).unwrap().trim_end().to_string();
+
+        ReferenceState {
+            pc,
+            a,
+            x,
+            y,
+            p: Status(p),
+            cyc,
+            op,
         }
     }
 }
