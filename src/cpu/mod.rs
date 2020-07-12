@@ -166,132 +166,7 @@ impl Cpu {
         use Cmd::*;
         use AddrMode::*;
 
-        let byte = self.fetch();
-
-        // Decode
-        let (op, addr_mode) = (match &byte {
-            0x48 => Some((PHA, Imp)),
-            0x28 => Some((PLP, Imp)),
-            0xD8 => Some((CLD, Imp)),
-            0xB8 => Some((CLV, Imp)),
-            0x30 => Some((BMI, Rel)),
-            0x29 => Some((AND, Imm)),
-            0x25 => Some((AND, Zpg)),
-            0x35 => Some((AND, ZpgX)),
-            0x2D => Some((AND, Abs)),
-            0x3D => Some((AND, AbsX)),
-            0x39 => Some((AND, AbsY)),
-            0x21 => Some((AND, XInd)),
-            0x31 => Some((AND, IndY)),
-
-            0xA0 => Some((LDY, Imm)),
-            0xA4 => Some((LDY, Zpg)),
-            0xB4 => Some((LDY, ZpgX)),
-            0xAC => Some((LDY, Abs)),
-            0xBC => Some((LDY, AbsX)),
-
-            0xC0 => Some((CPY, Imm)),
-            0xC4 => Some((CPY, Zpg)),
-            0xCC => Some((CPY, Abs)),
-
-            0xE0 => Some((CPX, Imm)),
-            0xE4 => Some((CPX, Zpg)),
-            0xEC => Some((CPX, Abs)),
-
-            0xA2 => Some((LDX, Imm)),
-            0xA6 => Some((LDX, Zpg)),
-            0xB6 => Some((LDX, ZpgY)),
-            0xAE => Some((LDX, Abs)),
-            0xBE => Some((LDX, AbsY)),
-            0x69 => Some((ADC, Imm)),
-            0x65 => Some((ADC, Zpg)),
-            0x75 => Some((ADC, ZpgX)),
-            0x6D => Some((ADC, Abs)),
-            0x7D => Some((ADC, AbsX)),
-            0x79 => Some((ADC, AbsY)),
-            0x61 => Some((ADC, XInd)),
-            0x71 => Some((ADC, IndY)),
-
-            0x49 => Some((EOR, Imm)),
-            0x45 => Some((EOR, Zpg)),
-            0x55 => Some((EOR, ZpgX)),
-            0x4D => Some((EOR, Abs)),
-            0x5D => Some((EOR, AbsX)),
-            0x59 => Some((EOR, AbsY)),
-            0x41 => Some((EOR, XInd)),
-            0x51 => Some((EOR, IndY)),
-
-            0xC9 => Some((CMP, Imm)),
-            0xC5 => Some((CMP, Zpg)),
-            0xD5 => Some((CMP, ZpgX)),
-            0xCD => Some((CMP, Abs)),
-            0xDD => Some((CMP, AbsX)),
-            0xD9 => Some((CMP, AbsY)),
-            0xC1 => Some((CMP, XInd)),
-            0xD1 => Some((CMP, IndY)),
-0xE8 => Some((INX, Imp)),
-0xC8 => Some((INY, Imp)),
-            0xE9 => Some((SBC, Imm)),
-            0xE5 => Some((SBC, Zpg)),
-            0xF5 => Some((SBC, ZpgX)),
-            0xED => Some((SBC, Abs)),
-            0xFD => Some((SBC, AbsX)),
-            0xF9 => Some((SBC, AbsY)),
-            0xE1 => Some((SBC, XInd)),
-            0xF1 => Some((SBC, IndY)),
-
-            0x09 => Some((ORA, Imm)),
-            0x05 => Some((ORA, Zpg)),
-            0x15 => Some((ORA, ZpgX)),
-            0x0D => Some((ORA, Abs)),
-            0x1D => Some((ORA, AbsX)),
-            0x19 => Some((ORA, AbsY)),
-            0x01 => Some((ORA, XInd)),
-            0x11 => Some((ORA, IndY)),
-
-            0x68 => Some((PLA, Imp)),
-            0x08 => Some((PHP, Imp)),
-            0x10 => Some((BPL, Rel)),
-            0x60 => Some((RTS, Imp)),
-            0x24 => Some((BIT, Zpg)),
-            0x70 => Some((BVS, Rel)),
-            0x50 => Some((BVC, Rel)),
-            0x2C => Some((BIT, Abs)),
-            0x18 => Some((CLC, Imp)),
-            0x20 => Some((JSR, Abs)),
-            0x38 => Some((SEC, Imp)),
-            0xB0 => Some((BCS, Rel)),
-            0x85 => Some((STA, Zpg)),
-            0x95 => Some((STA, ZpgX)),
-            0x8D => Some((STA, Abs)),
-            0x9D => Some((STA, AbsX)),
-            0x99 => Some((STA, AbsY)),
-            0x81 => Some((STA, XInd)),
-            0x91 => Some((STA, IndY)),
-            0x90 => Some((BCC, Rel)),
-            0xF0 => Some((BEQ, Rel)),
-            0xD0 => Some((BNE, Rel)),
-            0x4C => Some((JMP, Abs)),
-            0xEA => Some((NOP, Imp)),
-            0x86 => Some((STX, Zpg)),
-            0x78 => Some((SEI, Imp)),
-            0xF8 => Some((SED, Imp)),
-            0xA9 => Some((LDA, Imm)),
-            0xA5 => Some((LDA, Zpg)),
-            0xB5 => Some((LDA, ZpgX)),
-            0xAD => Some((LDA, Abs)),
-            0xBD => Some((LDA, AbsX)),
-            0xB9 => Some((LDA, AbsY)),
-            0xA1 => Some((LDA, XInd)),
-            0xB1 => Some((LDA, IndY)),
-            0xA2 => Some((LDX, Imm)),
-            0xA6 => Some((LDX, Zpg)),
-            0xB6 => Some((LDX, ZpgY)),
-            0xAE => Some((LDX, Abs)),
-            0xBE => Some((LDX, AbsY)),
-            0x00 => Some((BRK, Imp)),
-            _ => None
-        }).unwrap_or_else(|| unimplemented!("Unimplemeted opcode 0x{:02X?}", byte));
+        let (op, addr_mode) = Cpu::decode(self.fetch());
 
         let (operand, eff_addr) = match addr_mode {
             Imp => (Some(0xFF), None),
@@ -546,13 +421,21 @@ impl Cpu {
                 self.flags.set(Flag::N, (val as i8) < 0);
             }
             DEC => {
-                self.a = self.a.wrapping_sub(1);
+                // self.a = self.a.wrapping_sub(1);
+                // self.flags.set(Flag::Z, self.a == 0x00);
+                // self.flags.set(Flag::N, (self.a as i8) < 0);
             }
             DEX => {
                 self.x = self.x.wrapping_sub(1);
+                self.inc();
+                self.flags.set(Flag::Z, self.x == 0x00);
+                self.flags.set(Flag::N, (self.x as i8) < 0);
             }
             DEY => {
                 self.y = self.y.wrapping_sub(1);
+                self.inc();
+                self.flags.set(Flag::Z, self.y == 0x00);
+                self.flags.set(Flag::N, (self.y as i8) < 0);
             }
             EOR => {
                 match operand {
@@ -567,27 +450,21 @@ impl Cpu {
                 self.flags.set(Flag::N, (self.a as i8) < 0);
             }
             INC => {
-                let old = self.a;
                 self.a = self.a.wrapping_add(1);
+                ;
                 self.inc();
-                self.flags.set(Flag::V, ((!(old ^ 1) & (old ^ self.a)) & 0x80) > 0);
                 self.flags.set(Flag::Z, self.a == 0x00);
                 self.flags.set(Flag::N, (self.a as i8) < 0);
             }
             INX => {
-                let old = self.x;
                 self.x = self.x.wrapping_add(1);
                 self.inc();
-                self.flags.set(Flag::V, ((!(old ^ 1) & (old ^ self.x)) & 0x80) > 0);
                 self.flags.set(Flag::Z, self.x == 0x00);
                 self.flags.set(Flag::N, (self.x as i8) < 0);
             }
             INY => {
-                let old = self.y;
                 self.y = self.y.wrapping_add(1);
                 self.inc();
-                self.flags.set(Flag::V, ((!(old ^ 1) & (old ^ self.y)) & 0x80) > 0);
-
                 self.flags.set(Flag::Z, self.y == 0x00);
                 self.flags.set(Flag::N, (self.y as i8) < 0);
             }
@@ -683,19 +560,25 @@ impl Cpu {
                 self.inc();
             }
             SBC => {
-                let ((val, carry), op) = match operand {
-                    None => {
-                        let op = self.mem_read(eff_addr.unwrap());
-                        ((self.a).overflowing_sub((op)), op)
-                    }
-                    Some(op) => {
-                        ((self.a).overflowing_sub((op)), op)
-                    }
+                let carry_in = self.flags.is_set(Flag::C);
+                let operand = match operand {
+                    None => self.mem_read(eff_addr.unwrap()),
+                    Some(op) => op
                 };
-                self.flags.set(Flag::V, ((!(self.a ^ op) & (self.a ^ val)) & 0x80) > 0);
-                self.a = val;
 
-                self.flags.set(Flag::C, (self.a >= val) ^ carry);
+
+                let val = (self.a).wrapping_add(!(operand));
+
+                let (val, carry_out) = if val >= self.a {
+                    val.overflowing_add(if (carry_in) { 1 } else { 0 })
+                } else {
+                    (val + if (carry_in) { 1 } else { 0 }, true)
+                };
+
+
+                self.flags.set(Flag::V, (((self.a ^ val) & (!operand ^ val)) & 0x80) > 0);
+                self.a = val;
+                self.flags.set(Flag::C, carry_out);
                 self.flags.set(Flag::Z, val == 0x00);
                 self.flags.set(Flag::N, (val as i8) < 0);
             }
@@ -717,18 +600,26 @@ impl Cpu {
             TAX => {
                 self.x = self.a;
                 self.inc();
+                self.flags.set(Flag::Z, self.x == 0x00);
+                self.flags.set(Flag::N, (self.x as i8) < 0);
             }
             TAY => {
                 self.y = self.a;
                 self.inc();
+                self.flags.set(Flag::Z, self.y == 0x00);
+                self.flags.set(Flag::N, (self.y as i8) < 0);
             }
             TSX => {
                 self.x = self.sp;
                 self.inc();
+                self.flags.set(Flag::Z, self.x == 0x00);
+                self.flags.set(Flag::N, (self.x as i8) < 0);
             }
             TXA => {
                 self.a = self.x;
                 self.inc();
+                self.flags.set(Flag::Z, self.a == 0x00);
+                self.flags.set(Flag::N, (self.a as i8) < 0);
             }
             TXS => {
                 self.sp = self.x;
@@ -737,8 +628,162 @@ impl Cpu {
             TYA => {
                 self.a = self.y;
                 self.inc();
+                self.flags.set(Flag::Z, self.a == 0x00);
+                self.flags.set(Flag::N, (self.a as i8) < 0);
             }
         }
+    }
+
+    fn decode(byte: u8) -> (Cmd, AddrMode) {
+        use Cmd::*;
+        use AddrMode::*;
+
+        (match &byte {
+            0x48 => Some((PHA, Imp)),
+            0x28 => Some((PLP, Imp)),
+            0xD8 => Some((CLD, Imp)),
+            0xB8 => Some((CLV, Imp)),
+            0x30 => Some((BMI, Rel)),
+            0x29 => Some((AND, Imm)),
+            0x25 => Some((AND, Zpg)),
+            0x35 => Some((AND, ZpgX)),
+            0x2D => Some((AND, Abs)),
+            0x3D => Some((AND, AbsX)),
+            0x39 => Some((AND, AbsY)),
+            0x21 => Some((AND, XInd)),
+            0x31 => Some((AND, IndY)),
+
+            0xA0 => Some((LDY, Imm)),
+            0xA4 => Some((LDY, Zpg)),
+            0xB4 => Some((LDY, ZpgX)),
+            0xAC => Some((LDY, Abs)),
+            0xBC => Some((LDY, AbsX)),
+
+            0xC0 => Some((CPY, Imm)),
+            0xC4 => Some((CPY, Zpg)),
+            0xCC => Some((CPY, Abs)),
+
+            0xE0 => Some((CPX, Imm)),
+            0xE4 => Some((CPX, Zpg)),
+            0xEC => Some((CPX, Abs)),
+
+            0xA2 => Some((LDX, Imm)),
+            0xA6 => Some((LDX, Zpg)),
+            0xB6 => Some((LDX, ZpgY)),
+            0xAE => Some((LDX, Abs)),
+            0xBE => Some((LDX, AbsY)),
+            0x69 => Some((ADC, Imm)),
+            0x65 => Some((ADC, Zpg)),
+            0x75 => Some((ADC, ZpgX)),
+            0x6D => Some((ADC, Abs)),
+            0x7D => Some((ADC, AbsX)),
+            0x79 => Some((ADC, AbsY)),
+            0x61 => Some((ADC, XInd)),
+            0x71 => Some((ADC, IndY)),
+
+            0x49 => Some((EOR, Imm)),
+            0x45 => Some((EOR, Zpg)),
+            0x55 => Some((EOR, ZpgX)),
+            0x4D => Some((EOR, Abs)),
+            0x5D => Some((EOR, AbsX)),
+            0x59 => Some((EOR, AbsY)),
+            0x41 => Some((EOR, XInd)),
+            0x51 => Some((EOR, IndY)),
+
+            0xC9 => Some((CMP, Imm)),
+            0xC5 => Some((CMP, Zpg)),
+            0xD5 => Some((CMP, ZpgX)),
+            0xCD => Some((CMP, Abs)),
+            0xDD => Some((CMP, AbsX)),
+            0xD9 => Some((CMP, AbsY)),
+            0xC1 => Some((CMP, XInd)),
+            0xD1 => Some((CMP, IndY)),
+            0xE8 => Some((INX, Imp)),
+            0xC8 => Some((INY, Imp)),
+            0xE9 => Some((SBC, Imm)),
+            0xE5 => Some((SBC, Zpg)),
+            0xF5 => Some((SBC, ZpgX)),
+            0xED => Some((SBC, Abs)),
+            0xFD => Some((SBC, AbsX)),
+            0xF9 => Some((SBC, AbsY)),
+            0xE1 => Some((SBC, XInd)),
+            0xF1 => Some((SBC, IndY)),
+
+            0x09 => Some((ORA, Imm)),
+            0x05 => Some((ORA, Zpg)),
+            0x15 => Some((ORA, ZpgX)),
+            0x0D => Some((ORA, Abs)),
+            0x1D => Some((ORA, AbsX)),
+            0x19 => Some((ORA, AbsY)),
+            0x01 => Some((ORA, XInd)),
+            0x11 => Some((ORA, IndY)),
+
+            0x88 => Some((DEY, Imp)),
+            0xCA => Some((DEX, Imp)),
+
+            0xAA => Some((TAX, Imp)),
+            0xA8 => Some((TAY, Imp)),
+            0xBA => Some((TSX, Imp)),
+
+            0x8A => Some((TXA, Imp)),
+            0x9A => Some((TXS, Imp)),
+            0x98 => Some((TYA, Imp)),
+
+            0xC6 => Some((DEC, Zpg)),
+            0xD6 => Some((DEC, ZpgX)),
+            0xCE => Some((DEC, Abs)),
+            0xDE => Some((DEC, AbsX)),
+            0x68 => Some((PLA, Imp)),
+            0x08 => Some((PHP, Imp)),
+            0x10 => Some((BPL, Rel)),
+            0x60 => Some((RTS, Imp)),
+            0x24 => Some((BIT, Zpg)),
+            0x70 => Some((BVS, Rel)),
+            0x50 => Some((BVC, Rel)),
+            0x2C => Some((BIT, Abs)),
+            0x18 => Some((CLC, Imp)),
+            0x20 => Some((JSR, Abs)),
+            0x38 => Some((SEC, Imp)),
+            0xB0 => Some((BCS, Rel)),
+            0x85 => Some((STA, Zpg)),
+            0x95 => Some((STA, ZpgX)),
+            0x8D => Some((STA, Abs)),
+            0x9D => Some((STA, AbsX)),
+            0x99 => Some((STA, AbsY)),
+            0x81 => Some((STA, XInd)),
+            0x91 => Some((STA, IndY)),
+
+            0x86 => Some((STX, Zpg)),
+            0x96 => Some((STX, ZpgY)),
+            0x8E => Some((STX, Abs)),
+
+            0x84 => Some((STY, Zpg)),
+            0x94 => Some((STY, ZpgY)),
+            0x9C => Some((STY, Abs)),
+
+            0x90 => Some((BCC, Rel)),
+            0xF0 => Some((BEQ, Rel)),
+            0xD0 => Some((BNE, Rel)),
+            0x4C => Some((JMP, Abs)),
+            0xEA => Some((NOP, Imp)),
+            0x78 => Some((SEI, Imp)),
+            0xF8 => Some((SED, Imp)),
+            0xA9 => Some((LDA, Imm)),
+            0xA5 => Some((LDA, Zpg)),
+            0xB5 => Some((LDA, ZpgX)),
+            0xAD => Some((LDA, Abs)),
+            0xBD => Some((LDA, AbsX)),
+            0xB9 => Some((LDA, AbsY)),
+            0xA1 => Some((LDA, XInd)),
+            0xB1 => Some((LDA, IndY)),
+            0xA2 => Some((LDX, Imm)),
+            0xA6 => Some((LDX, Zpg)),
+            0xB6 => Some((LDX, ZpgY)),
+            0xAE => Some((LDX, Abs)),
+            0xBE => Some((LDX, AbsY)),
+            0x00 => Some((BRK, Imp)),
+            _ => None
+        }).unwrap_or_else(|| unimplemented!("Unimplemeted opcode 0x{:02X?}", byte))
     }
 
     fn fetch(&mut self) -> u8 {
