@@ -514,7 +514,23 @@ impl Cpu {
                 self.flags.set(Flag::Z, self.y == 0x00);
                 self.flags.set(Flag::N, (self.y as i8) < 0);
             }
-            LSR => {}
+            LSR => {
+                match eff_addr {
+                    None => {
+                        let (res, overflow) = self.a.overflowing_shr(1);
+                        self.a = res;
+                        self.flags.set(Flag::C, overflow);
+                    }
+                    Some(addr) => {
+                        let op = self.mem_read(addr);
+                        let (res, overflow) = op.overflowing_shr(1);
+                        self.mem_write(addr, res >> 1);
+                        self.flags.set(Flag::C, overflow);
+                    }
+                }
+                self.flags.set(Flag::Z, self.a == 0x00);
+                self.flags.set(Flag::N, false);
+            }
             NOP => self.inc(),
             ORA => {
                 match operand {
