@@ -102,11 +102,7 @@ impl Screen {
 }
 
 pub trait Update {
-    fn update(&mut self);
-}
-
-pub trait Draw {
-    fn draw(&self, screen: &mut Screen);
+    fn update(&mut self, screen: &mut Screen, window: &minifb::Window) -> bool;
 }
 
 #[derive(Debug)]
@@ -142,15 +138,15 @@ impl From<minifb::Error> for NesEmuError {
     }
 }
 
-pub struct Engine<'a, T> where T: Draw + Update {
+pub struct Engine<'a> {
     window: minifb::Window,
     screen: Screen,
     show_dbg: bool,
-    game: &'a mut T,
+    game: &'a mut dyn Update,
 }
 
-impl<'a, T> Engine<'a, T> where T: Draw + Update {
-    pub fn build(game: &'a mut T) -> Result<Self, NesEmuError> {
+impl<'a> Engine<'a> {
+    pub fn build(game: &'a mut dyn Update) -> Result<Self, NesEmuError> {
         let window = minifb::Window::new("NES emulator", WIDTH, HEIGHT, minifb::WindowOptions {
             resize: false,
             ..minifb::WindowOptions::default()
@@ -158,7 +154,7 @@ impl<'a, T> Engine<'a, T> where T: Draw + Update {
 
         let screen = Screen::new();
 
-        let show_dbg = false;
+        let show_dbg = true;
 
         Ok(Self {
             window,
@@ -169,34 +165,26 @@ impl<'a, T> Engine<'a, T> where T: Draw + Update {
     }
 
     pub fn run(&mut self) -> Result<(), NesEmuError> {
-        let mut fps: f32 = 0.0;
-
         loop {
             let now = time::Instant::now();
 
-            if self.window.is_key_pressed(minifb::Key::Escape, minifb::KeyRepeat::No) {
+            let should_continue = self.game.update(
+                &mut self.screen,
+                &self.window,
+            );
+
+            if !should_continue {
                 break;
             }
-
-            if self.window.is_key_pressed(minifb::Key::F10, minifb::KeyRepeat::No) {
-                self.show_dbg = !self.show_dbg;
-            }
-
-            self.game.update();
-            self.game.draw(&mut self.screen);
 
             self.window.update_with_buffer(&self.screen.buf)?;
 
             let elapsed = time::Instant::now().duration_since(now);
-            fps = 1000000.0 / elapsed.as_micros() as f32;
-
-            let fps = 0.0;
+            let fps = 1000000.0 / elapsed.as_micros() as f32;
 
             if self.show_dbg {
                 self.screen.draw_string(8, 8, format!("FPS: {}", fps).as_str());
             }
-
-            self.window.set_title(format!("NES emulator. FPS: {}", fps).as_str())
         }
 
         Ok(())
